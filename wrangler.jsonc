@@ -12,15 +12,11 @@
     {
       "binding": "DB",
       "database_name": "agent-mail-track",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "974c8d6d-aada-49d7-90d1-694d65621a12",
       "migrations_dir": "migrations",
     },
   ],
-  // Custom domain (optional — not required to merge or deploy to *.workers.dev):
-  // 1. Dashboard: Workers → agent-mail-track → Settings → Domains & Routes
-  //    → Add Custom Domain → track.greatindiancompany.com
-  // 2. Or uncomment after the zone is in the same Cloudflare account:
-  // "routes": [
-  //   { "pattern": "track.greatindiancompany.com/*", "zone_name": "greatindiancompany.com" }
-  // ]
+  "routes": [
+    { "pattern": "track.greatindiancompany.com/*", "zone_name": "greatindiancompany.com" }
+  ]
 }
