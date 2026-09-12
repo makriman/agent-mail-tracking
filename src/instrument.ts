@@ -125,6 +125,11 @@ export function trimSlash(url: string): string {
   return url.replace(/\/+$/, "");
 }
 
+/** Prefer the host stored at create time so GET does not rewrite to the request Host. */
+export function trackingOrigin(storedBaseUrl: string | null | undefined, requestOrigin: string): string {
+  return trimSlash(storedBaseUrl || requestOrigin);
+}
+
 export function collectUrls(mode: Mode, text?: string, html?: string): string[] {
   if (mode === "html") {
     return extractHtmlHrefUrls(html ?? "");

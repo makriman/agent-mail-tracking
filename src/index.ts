@@ -21,8 +21,10 @@ import {
   collectUrls,
   instrument,
   openUrl,
+  trackingOrigin,
   trimSlash,
 } from "./instrument";
+import { buildRawMime } from "./mime";
 import { PIXEL_HEADERS, pixelGifBytes } from "./pixel";
 import { isSafeRedirectUrl } from "./redirect";
 import { hashIp, signToken, verifyToken } from "./tokens";
@@ -208,6 +210,7 @@ app.post("/v1/messages", async (c) => {
     open_tracking: result.open_tracking,
     metadata: body.metadata ? JSON.stringify(body.metadata) : null,
     webhook_url: body.webhook_url?.trim() || null,
+    base_url: baseUrl,
   });
   await insertLinks(
     c.env.DB,
@@ -219,6 +222,17 @@ app.post("/v1/messages", async (c) => {
     })),
   );
 
+  const mime = buildRawMime({
+    to: body.to.trim(),
+    from: body.from?.trim() || null,
+    subject: body.subject?.trim() || null,
+    text: result.text,
+    html: result.html,
+    messageId,
+    date: now,
+    baseUrl,
+  });
+
   return c.json(
     {
       message_id: messageId,
@@ -229,10 +243,14 @@ app.post("/v1/messages", async (c) => {
       status: "no_signal",
       replied: false,
       to: body.to.trim(),
+      from: body.from?.trim() || null,
       subject: body.subject?.trim() || null,
       text: result.text,
       html: result.html,
+      raw_mime: mime.raw_mime,
+      raw_base64url: mime.raw_base64url,
       pixel_url: pixelUrl,
+      base_url: baseUrl,
       links: links.map((l) => ({
         id: l.id,
         original_url: l.original_url,
@@ -267,11 +285,12 @@ app.get("/v1/messages/:id", async (c) => {
     listEvents(c.env.DB, row.id),
     hadHumanOpen(c.env.DB, row.id),
   ]);
-  const origin = trimSlash(new URL(c.req.url).origin);
+  const origin = trackingOrigin(row.base_url, new URL(c.req.url).origin);
   return c.json(
     serializeMessage(row, {
       humanOpen: human,
       events,
+      base_url: origin,
       links: await Promise.all(
         links.map(async (l) => ({
           id: l.id,
@@ -297,7 +316,12 @@ export default app;
 
 function validateCreate(body: CreateMessageBody): string | null {
   if (!body || typeof body !== "object") return "invalid_body";
-  if (typeof body.to !== "string" || !body.to.includes("@") || body.to.length > 320) {
+  if (
+    typeof body.to !== "string" ||
+    !body.to.includes("@") ||
+    body.to.length > 320 ||
+    /[\r\n]/.test(body.to)
+  ) {
     return "invalid_to";
   }
   const mode = body.mode ?? "plain_looking";
@@ -305,6 +329,16 @@ function validateCreate(body: CreateMessageBody): string | null {
 
   if (body.subject != null && (typeof body.subject !== "string" || body.subject.length > 500)) {
     return "invalid_subject";
+  }
+  if (body.from != null) {
+    if (
+      typeof body.from !== "string" ||
+      !body.from.includes("@") ||
+      body.from.length > 320 ||
+      /[\r\n]/.test(body.from)
+    ) {
+      return "invalid_from";
+    }
   }
   if (body.text != null && (typeof body.text !== "string" || body.text.length > MAX_BODY)) {
     return "invalid_text";

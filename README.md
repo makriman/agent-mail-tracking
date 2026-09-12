@@ -6,6 +6,8 @@ Open-source, self-hostable email telemetry for AI agents. A Cloudflare Worker in
 
 This Worker **does not send email**. Agents `POST` message content, receive instrumented content plus a `message_id`, and send through their own Gmail / SMTP / ESP.
 
+> **Gmail connector `htmlBody` strips the open pixel.** Open tracking is a 1×1 `<img src="…/o/…">`. Gmail MCP `send_message` / `create_draft` `htmlBody` sanitizes and drops all `<img>` tags — the inbox can still mark UNREAD, but the tracker stays `no_signal`. **Do not** send the returned `html` through `htmlBody`. Use `raw_mime` / `raw_base64url` from `POST /v1/messages` with the Gmail API `{ "raw": "<raw_base64url>" }` (or SMTP that does not strip). See [docs/agent-send.md](./docs/agent-send.md).
+
 Custom domain target: [`track.greatindiancompany.com`](https://track.greatindiancompany.com) (attach after deploy; not required to merge or to run on `*.workers.dev`).
 
 ## Non-goals (v0)
@@ -24,28 +26,31 @@ Custom domain target: [`track.greatindiancompany.com`](https://track.greatindian
 Agent                         Worker                         Inbox
   |                              |                              |
   |-- POST /v1/messages -------->|                              |
-  |<-- text + html + message_id -|                              |
+  |<-- raw_mime / raw_base64url -|                              |
   |                              |                              |
-  |-- send via Gmail/SMTP ------------------------------------->|
+  |-- Gmail API raw / SMTP ------------------------------------>|
   |                              |<-- GET /o/:token  (open) ----|
   |                              |<-- GET /c/:token  (click) ---|
   |-- GET /v1/messages/:id ----->|                              |
   |<-- status, events, opens ----|                              |
 ```
 
-1. `POST /v1/messages` with `to`, optional `subject`, `text` and/or `html`, optional `mode`.
-2. Send the returned `text` / `html` yourself. For `plain_looking`, send `multipart/alternative` (`text/plain` + `text/html`).
-3. Read `GET /v1/messages/:id` (`status`, `opens`, `clicks`, event timeline) and act.
+1. `POST /v1/messages` with `to`, optional `from` / `subject`, `text` and/or `html`, optional `mode`.
+2. Send **`raw_base64url`** via Gmail API `users.messages.send` `{ "raw": "…" }` (or SMTP `DATA` of `raw_mime`). That RFC822 payload is `multipart/alternative` with the tracking `<img>` intact.
+3. **Do not** paste `html` into Gmail MCP / connector `htmlBody` — images are stripped.
+4. Read `GET /v1/messages/:id` (`status`, `opens`, `clicks`, event timeline) and act.
 
 ## Three modes (exactly these)
 
 | Mode | Input | Output | Opens |
 | --- | --- | --- | --- |
-| `plain_looking` **(default)** | Prose `text` | Instrumented `text` + bare HTML twin (`<p>` / `<br>` / `<a>` only) + 1×1 pixel | Count (`0` until the pixel fires) |
-| `plain_only` | Prose `text` | Instrumented `text` only; `http(s)` links rewritten | **`opens: null`**, `open_tracking: false` — never claim `0` |
+| `plain_looking` **(default)** | Prose `text` | Instrumented `text` + bare HTML twin (`<p>` / `<br>` / `<a>` only) + 1×1 pixel; `raw_mime` is `multipart/alternative` | Count (`0` until the pixel fires) |
+| `plain_only` | Prose `text` | Instrumented `text` only; `http(s)` links rewritten; `raw_mime` is `text/plain` | **`opens: null`**, `open_tracking: false` — never claim `0` |
 | `html` | Existing `html` | Pixel injected if missing; `http(s)` hrefs rewritten; skip `mailto:` / `tel:` / `#` | Count |
 
 `http(s)` only. Click redirects refuse `javascript:`, `data:`, protocol-relative, and other schemes.
+
+Open tracking is the 1×1 `<img>` pixel. CSS/`background-image` tricks are unreliable in mail clients — this API does not use them. Click rewriting still happens; it is not a substitute for opens.
 
 ## Architecture
 
@@ -69,7 +74,7 @@ cp .dev.vars.example .dev.vars   # local only; do not commit
 # 1. Create D1 and paste database_id into wrangler.jsonc
 npx wrangler d1 create agent-mail-track
 
-# 2. Apply migrations
+# 2. Apply migrations (re-run after pulls that add migrations/0002_…)
 npm run db:migrate                # local SQLite for wrangler dev
 npm run db:migrate:remote         # production D1
 
@@ -92,7 +97,7 @@ Do **not** block a merge or a first deploy on DNS. Attach when the zone lives in
 1. Dashboard → **Workers & Pages** → `agent-mail-track` → **Settings** → **Domains & Routes** → **Add** → Custom Domain → `track.greatindiancompany.com`
 2. Or uncomment the `routes` example in `wrangler.jsonc` (`pattern` + `zone_name`) and redeploy
 
-Then pass `"base_url": "https://track.greatindiancompany.com"` on `POST /v1/messages` so pixels and clicks are absolute on that host (otherwise the Worker uses the request origin).
+Then pass `"base_url": "https://track.greatindiancompany.com"` on `POST /v1/messages` so pixels and clicks are absolute on that host (otherwise the Worker uses the request origin). The chosen origin is persisted; later `GET /v1/messages/:id` returns `pixel_url` / `tracked_url` on that host even if you call the API via `*.workers.dev`.
 
 ## Curl smoke
 
@@ -102,10 +107,11 @@ export API_KEY="…"                             # same value as the Worker secr
 
 curl -sS "$HOST/health"
 
-# plain_looking (default) — expect html twin + pixel_url + opens: 0
+# plain_looking (default) — expect html twin + pixel_url + raw_mime / raw_base64url + opens: 0
 curl -sS -X POST "$HOST/v1/messages" \
   -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
   -d '{"to":"ada@example.com","subject":"Hello","text":"Hi Ada,\n\nSee https://example.com/docs and write back."}'
+# Send with Gmail API raw — not htmlBody. See docs/agent-send.md.
 
 # plain_only — expect open_tracking:false, opens:null, html:null
 curl -sS -X POST "$HOST/v1/messages" \

@@ -14,13 +14,14 @@ export async function insertMessage(
     open_tracking: boolean;
     metadata: string | null;
     webhook_url: string | null;
+    base_url: string | null;
   },
 ): Promise<void> {
   await db
     .prepare(
       `INSERT INTO messages (
-        id, created_at, recipient, subject, mode, open_tracking, metadata, webhook_url
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, created_at, recipient, subject, mode, open_tracking, metadata, webhook_url, base_url
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       row.id,
@@ -31,6 +32,7 @@ export async function insertMessage(
       row.open_tracking ? 1 : 0,
       row.metadata,
       row.webhook_url,
+      row.base_url,
     )
     .run();
 }
@@ -197,6 +199,7 @@ export function serializeMessage(
     pixel_url?: string | null;
     text?: string | null;
     html?: string | null;
+    base_url?: string | null;
   } = {},
 ) {
   const openTracking = Boolean(row.open_tracking);
@@ -217,6 +220,7 @@ export function serializeMessage(
     last_classification: row.last_classification,
     last_event_at: row.last_event_at,
     metadata: parseMetadata(row.metadata),
+    ...(extras.base_url !== undefined ? { base_url: extras.base_url } : {}),
     ...(extras.pixel_url !== undefined ? { pixel_url: extras.pixel_url } : {}),
     ...(extras.text !== undefined ? { text: extras.text } : {}),
     ...(extras.html !== undefined ? { html: extras.html } : {}),
