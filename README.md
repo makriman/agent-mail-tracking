@@ -1,18 +1,20 @@
 # Agent Mail Track
 
-**Track email opens, clicks, and delivery in a form agents can read and act on.**
+**Build the method by which AI agents insert open/click tracking into their outbound mail workflow.** Chrome MailTrack-class extensions miss agent API sends; AMT exists so agents don’t depend on connector HTML sanitizers or vendor fixes.
 
-Open-source, self-hostable email telemetry for AI agents. A Cloudflare Worker instruments outbound message content; opens and clicks land in D1. Agents poll a JSON API. Humans get a thin dashboard.
+AMT is the **bridge** when we cannot change upstream connectors (Grok Bot / xAI, ChatGPT, Claude, Outlook MCP, Gmail MCP, …). Those often sanitize `htmlBody` and strip `<img>`, or expose no raw send. AMT does **not** replace Gmail or Outlook — it mints instrumented MIME (`raw_mime` / `raw_base64url`) so any office can wrap send.
 
-This Worker **does not send email**. Agents `POST` message content, receive instrumented content plus a `message_id`, and send through their own Gmail / SMTP / ESP.
+Open-source, self-hostable. A Cloudflare Worker instruments content; opens and clicks land in D1. Agents poll JSON. Humans get a thin dashboard. This Worker **does not send email**.
 
-> **Gmail connector `htmlBody` strips the open pixel.** Open tracking is a 1×1 `<img src="…/o/…">`. Gmail MCP `send_message` / `create_draft` `htmlBody` sanitizes and drops all `<img>` tags — the inbox can still mark UNREAD, but the tracker stays `no_signal`. **Do not** send the returned `html` through `htmlBody`. Use `raw_mime` / `raw_base64url` from `POST /v1/messages` with the Gmail API `{ "raw": "<raw_base64url>" }` (or SMTP that does not strip). See [docs/agent-send.md](./docs/agent-send.md).
+**Office shim:** default-on `sendTrackedEmail` — mint, then send via that provider’s img-preserving path (Gmail raw, Outlook Graph MIME, SMTP DATA). Agents never mint by hand. Spec: [docs/send-tracked-email-shim.md](./docs/send-tracked-email-shim.md).
+
+> **Industry class: MCP / connector `htmlBody` strips the open pixel.** Compose helpers (Gmail MCP `send_message` / `create_draft`, Outlook MCP JSON body, similar tools) sanitize HTML and drop `<img>`. Inbox UNREAD can still clear; AMT stays `no_signal`. **Do not** send returned `html` through `htmlBody`. Use `raw_mime` / `raw_base64url`. Not Gmail-only — Outlook Graph send MIME is first-class next (same mint; not wired in this Worker). See [docs/agent-send.md](./docs/agent-send.md).
 
 Custom domain target: [`track.greatindiancompany.com`](https://track.greatindiancompany.com) (attach after deploy; not required to merge or to run on `*.workers.dev`).
 
 ## Non-goals (v0)
 
-- Sending mail (SMTP, Gmail API, ESP wrappers)
+- Sending mail (Gmail API, Outlook Graph, SMTP, ESP wrappers)
 - Chrome extension
 - MCP server
 - Docker-first path
@@ -28,16 +30,16 @@ Agent                         Worker                         Inbox
   |-- POST /v1/messages -------->|                              |
   |<-- raw_mime / raw_base64url -|                              |
   |                              |                              |
-  |-- Gmail API raw / SMTP ------------------------------------>|
-  |                              |<-- GET /o/:token  (open) ----|
-  |                              |<-- GET /c/:token  (click) ---|
-  |-- GET /v1/messages/:id ----->|                              |
-  |<-- status, events, opens ----|                              |
+  |-- Gmail raw / Graph MIME / SMTP --------------------------->|
+    |                              |<-- GET /o/:token  (open) ----|
+    |                              |<-- GET /c/:token  (click) ---|
+    |-- GET /v1/messages/:id ----->|                              |
+    |<-- status, events, opens ----|                              |
 ```
 
 1. `POST /v1/messages` with `to`, optional `from` / `subject`, `text` and/or `html`, optional `mode`.
-2. Send **`raw_base64url`** via Gmail API `users.messages.send` `{ "raw": "…" }` (or SMTP `DATA` of `raw_mime`). That RFC822 payload is `multipart/alternative` with the tracking `<img>` intact.
-3. **Do not** paste `html` into Gmail MCP / connector `htmlBody` — images are stripped.
+2. Send the RFC822 on a path that **keeps `<img>`**: Gmail `{ "raw": raw_base64url }`, Outlook Graph send MIME, or SMTP `DATA` of `raw_mime`.
+3. **Do not** paste `html` into any connector `htmlBody` / JSON HTML body — images are stripped.
 4. Read `GET /v1/messages/:id` (`status`, `opens`, `clicks`, event timeline) and act.
 
 ## Three modes (exactly these)
@@ -111,7 +113,7 @@ curl -sS "$HOST/health"
 curl -sS -X POST "$HOST/v1/messages" \
   -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
   -d '{"to":"ada@example.com","subject":"Hello","text":"Hi Ada,\n\nSee https://example.com/docs and write back."}'
-# Send with Gmail API raw — not htmlBody. See docs/agent-send.md.
+# Send via Gmail raw / Graph MIME / SMTP — not htmlBody. See docs/agent-send.md.
 
 # plain_only — expect open_tracking:false, opens:null, html:null
 curl -sS -X POST "$HOST/v1/messages" \
