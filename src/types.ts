@@ -21,6 +21,7 @@ export type Status =
 
 export interface CreateMessageBody {
   to: string;
+  from?: string;
   subject?: string;
   text?: string;
   html?: string;
@@ -45,6 +46,7 @@ export interface MessageRow {
   open_tracking: number;
   metadata: string | null;
   webhook_url: string | null;
+  base_url: string | null;
   first_open_at: string | null;
   first_click_at: string | null;
   open_count: number;

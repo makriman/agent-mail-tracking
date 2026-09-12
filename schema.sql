@@ -1,5 +1,5 @@
 -- Agent Mail Track v0 — canonical D1 schema.
--- Applied in production via migrations/0001_init.sql
+-- Applied in production via migrations/0001_init.sql and later 0002_*.sql
 --   wrangler d1 migrations apply agent-mail-track --local
 --   wrangler d1 migrations apply agent-mail-track --remote
 --
@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS messages (
   open_tracking INTEGER NOT NULL DEFAULT 1 CHECK (open_tracking IN (0, 1)),
   metadata TEXT,
   webhook_url TEXT,
+  base_url TEXT,
   first_open_at TEXT,
   first_click_at TEXT,
   open_count INTEGER NOT NULL DEFAULT 0,

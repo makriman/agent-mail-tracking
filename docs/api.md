@@ -11,6 +11,8 @@ Auth for `/v1/*` and the dashboard (`GET /`, `GET /m/:id`):
 
 This service **does not send email**. Agents POST content, receive instrumented content + `message_id`, and send via their own Gmail/SMTP/etc.
 
+**Open tracking requires the HTML `<img>` to survive send.** `POST /v1/messages` returns `raw_mime` and `raw_base64url` for that. Gmail MCP / connector `htmlBody` **strips `<img>` tags** — do not use it for tracked mail. See [agent-send.md](./agent-send.md).
+
 ## `GET /health`
 
 ```json
@@ -24,6 +26,7 @@ Create a tracked message and receive instrumented bodies.
 ```json
 {
   "to": "ada@example.com",
+  "from": "you@gmail.com",
   "subject": "Hello",
   "text": "Hi Ada,\n\nSee https://example.com/docs and write back.",
   "html": "<p>optional; required for mode=html</p>",
@@ -36,14 +39,15 @@ Create a tracked message and receive instrumented bodies.
 
 | Field | Required | Notes |
 | --- | --- | --- |
-| `to` | yes | Recipient hint stored for the dashboard/API. Must contain `@`. |
+| `to` | yes | Recipient. Must contain `@`. Used in the RFC822 `To` header. |
+| `from` | no | Optional RFC822 `From`. Must contain `@`. Gmail requires this to be the authenticated user or a send-as alias; omit to let Gmail fill it. |
 | `subject` | no | Max 500 chars |
 | `text` | yes except `html` mode | Prose for `plain_looking` / `plain_only` |
 | `html` | yes in `html` mode | Existing HTML to instrument |
 | `mode` | no | `plain_looking` (default) \| `plain_only` \| `html` |
 | `metadata` | no | JSON object, max ~8 KiB |
 | `webhook_url` | no | HTTPS (or `http://localhost`) — first open / first click |
-| `base_url` | no | Origin for absolute pixel/click URLs. Defaults to this request's origin. |
+| `base_url` | no | Origin for absolute pixel/click URLs. Defaults to this request's origin. **Persisted** so later GETs keep this host. |
 
 ### Modes
 
@@ -52,7 +56,9 @@ Create a tracked message and receive instrumented bodies.
 - `text`: original prose with `http(s)` URLs rewritten to `/c/:token`
 - `html`: bare twin (`<p>` / `<br>` / `<a>` only, no campaign CSS) plus a 1×1 `<img>` pixel at `/o/:token`
 
-The agent should send `text` as `text/plain` and `html` as `text/html` in a `multipart/alternative` message.
+Prefer the returned **`raw_mime` / `raw_base64url`** instead of assembling MIME yourself. That payload is already `multipart/alternative` (`text/plain` + `text/html`) with the 1×1 pixel in the HTML part.
+
+Do **not** send `html` through Gmail `htmlBody` — the connector strips `<img>`.
 
 **`plain_only`** — keep text; rewrite `http(s)` links only. No HTML, no pixel.
 
@@ -76,10 +82,14 @@ Never interpret `opens: null` as zero opens.
   "status": "no_signal",
   "replied": false,
   "to": "ada@example.com",
+  "from": "you@gmail.com",
   "subject": "Hello",
   "text": "…rewritten…",
   "html": "<p>…</p>\n<img src=\"https://…/o/…\" width=\"1\" height=\"1\" alt=\"\">",
+  "raw_mime": "MIME-Version: 1.0\r\nDate: …\r\n…multipart/alternative…<img src=\"https://…/o/…\">…",
+  "raw_base64url": "TUlNRS1WZXJzaW9uOiAxLjA…",
   "pixel_url": "https://…/o/msg_….sig",
+  "base_url": "https://track.greatindiancompany.com",
   "links": [
     { "id": "lnk_…", "original_url": "https://example.com/docs", "tracked_url": "https://…/c/lnk_….sig" }
   ],
@@ -88,7 +98,14 @@ Never interpret `opens: null` as zero opens.
 }
 ```
 
-For `plain_only`, `opens` is `null` and `open_tracking` is `false`.
+| Response field | Notes |
+| --- | --- |
+| `raw_mime` | Full RFC 5322 message (CRLF). SMTP `DATA`. HTML part contains the `/o/` pixel when `open_tracking` is true. |
+| `raw_base64url` | `raw_mime` encoded for Gmail API `{ raw }`. |
+| `html` / `text` | Convenience copies. Unsafe for Gmail `htmlBody` (images stripped). |
+| `base_url` | Origin baked into pixel and click URLs. |
+
+For `plain_only`, `opens` is `null`, `open_tracking` is `false`, and `raw_mime` is `text/plain` only (no pixel — never claim opens).
 
 Errors: `400` `{ "error": "…" }` (`invalid_to`, `text_required`, `html_required`, `invalid_mode`, …), `401` unauthorized.
 
@@ -126,7 +143,9 @@ List recent messages for the dashboard and agents.
 
 ## `GET /v1/messages/:id`
 
-Same object plus `links[]`, `events[]` timeline (`ip_hash`, `classification`, `deduped`, `user_agent`, `cf_country`, `original_url` on clicks), and current `pixel_url` when open tracking is on.
+Same object plus `links[]`, `events[]` timeline (`ip_hash`, `classification`, `deduped`, `user_agent`, `cf_country`, `original_url` on clicks), `base_url`, and current `pixel_url` when open tracking is on.
+
+`pixel_url` and each `tracked_url` use the **`base_url` stored at create time**, not the `Host` of this GET (so a workers.dev request does not rewrite a custom-domain pixel). Bodies / `raw_mime` are not persisted; use the create response to send.
 
 `404` `{ "error": "not_found" }`.
 
