@@ -1,6 +1,14 @@
-# Grok Bot shim: `sendTrackedEmail`
+# Office shim: `sendTrackedEmail`
 
-Office-side integration spec. **AMT instruments; it does not send.** The office shim must mint, then deliver the returned RFC822.
+Provider-agnostic mint+send for any agent office (Grok Bot / xAI first; ChatGPT, Claude, Outlook MCP, …). **AMT instruments; it does not send.** It does not replace Gmail or Outlook.
+
+Same pattern everywhere: mint → send via that provider’s raw / Graph MIME / SMTP path that **preserves HTML `<img>`**.
+
+## Why AMT (not a connector patch)
+
+Upstream connectors often sanitize `htmlBody` (or JSON HTML `body.content`) and **strip `<img>`**, or they expose no raw send. That is an industry class — Gmail MCP `send_message` / `create_draft`, Outlook MCP compose, and similar tools. Chrome MailTrack-class extensions never see API sends. Waiting on vendor sanitizer fixes is not a product.
+
+AMT mints instrumented RFC822 (`raw_mime` / `raw_base64url`) with the 1×1 pixel intact. The office wraps send. Outlook Graph send MIME is **first-class next** (same mint; not connected in this Worker yet).
 
 ## Goal
 
@@ -31,22 +39,19 @@ sendTrackedEmail({
 When `track` is on (default):
 
 1. `POST /v1/messages` with `mode=plain_looking` (unless the caller passed another AMT mode).
-2. Send the instrumented payload on the path below.
+2. Send the instrumented payload on a path below.
 3. Return AMT `message_id` plus the send result.
 
-## Gmail path
+## Send paths (keep `<img>`)
 
-1. Mint: `POST /v1/messages`.
-2. Send: Gmail API `users.messages.send({ raw: <raw_base64url> })`.
+| Provider | Use | Banned |
+| --- | --- | --- |
+| **Gmail** | `users.messages.send({ raw: <raw_base64url> })` (drafts: `users.drafts.create({ message: { raw } })`) | `htmlBody` / `textBody` |
+| **Outlook** (next) | Graph send MIME — `POST /me/sendMail` with `Content-Type: text/plain` and `raw_mime` (not JSON `body.content`) | MCP / Graph JSON HTML body |
+| **SMTP / iCloud** | SMTP `DATA` of `raw_mime` (e.g. `smtp.mail.me.com:587`, STARTTLS) | Any HTML-sanitizing hop |
+| Future connectors | Same mint; wrap whatever raw/MIME/SMTP API keeps `<img>` | `htmlBody`-class fields |
 
-**Never** pass AMT `html` / `text` to connector `htmlBody` / `textBody`. Those fields sanitize and **strip `<img>`**. The pixel never reaches the inbox; `GET /v1/messages/:id` stays `no_signal` even if the recipient reads the mail.
-
-Same ban for drafts: `users.drafts.create({ message: { raw } })` only. No `htmlBody`.
-
-## SMTP / iCloud path
-
-1. Same mint: `POST /v1/messages`.
-2. Send: SMTP `DATA` of `raw_mime` (already headers + CRLF). Example hop: `smtp.mail.me.com:587` (STARTTLS). Any hop that HTML-sanitizes drops the pixel the same way `htmlBody` does.
+**Never** pass AMT `html` / `text` to connector `htmlBody` / JSON HTML. Sanitizers drop `<img>`. The pixel never reaches the inbox; `GET /v1/messages/:id` stays `no_signal` even if the recipient reads the mail.
 
 ## Success
 
@@ -55,8 +60,8 @@ Same ban for drafts: `users.drafts.create({ message: { raw } })` only. No `htmlB
 
 ## Blockers
 
-- Gmail needs `gmail.send`-capable OAuth **and** a **raw-capable** connector (`{ raw }`). `htmlBody` is banned for tracked mail.
-- No raw Gmail and no SMTP `DATA` → the office cannot deliver a surviving pixel. AMT will not send for you.
+- The office needs a **raw / MIME / SMTP-capable** send (Gmail `gmail.send` + `{ raw }`, Outlook Graph MIME, or SMTP `DATA`). `htmlBody`-class paths are banned for tracked mail.
+- No such path → the office cannot deliver a surviving pixel. AMT will not send for you. Do not wait on upstream connector vendors to stop stripping `<img>`.
 
 ## See also
 
