@@ -4,6 +4,8 @@ Open tracking is the product. It only works if the HTML **1×1 `<img src="{base}
 
 This Worker does **not** send mail. `POST /v1/messages` instruments content and returns a ready-to-send RFC822 payload.
 
+**Grok Bot / office:** wrap this flow in a default-on `sendTrackedEmail` shim so agents never opt-in mint. AMT still does not send — the office shim must. Spec: [send-tracked-email-shim.md](./send-tracked-email-shim.md).
+
 ## Do not use Gmail connector `htmlBody`
 
 Gmail MCP / connector `send_message` and `create_draft` fields named `htmlBody` (and typical “compose HTML” helpers) **sanitize and strip `<img>` tags**. Verified failure mode:

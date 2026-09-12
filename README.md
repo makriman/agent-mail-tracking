@@ -6,6 +6,8 @@ Open-source, self-hostable email telemetry for AI agents. A Cloudflare Worker in
 
 This Worker **does not send email**. Agents `POST` message content, receive instrumented content plus a `message_id`, and send through their own Gmail / SMTP / ESP.
 
+**Grok Bot / office:** wrap mint+send in a default-on `sendTrackedEmail` shim so agents never mint by hand. AMT still does not send — the office shim must. Spec: [docs/send-tracked-email-shim.md](./docs/send-tracked-email-shim.md).
+
 > **Gmail connector `htmlBody` strips the open pixel.** Open tracking is a 1×1 `<img src="…/o/…">`. Gmail MCP `send_message` / `create_draft` `htmlBody` sanitizes and drops all `<img>` tags — the inbox can still mark UNREAD, but the tracker stays `no_signal`. **Do not** send the returned `html` through `htmlBody`. Use `raw_mime` / `raw_base64url` from `POST /v1/messages` with the Gmail API `{ "raw": "<raw_base64url>" }` (or SMTP that does not strip). See [docs/agent-send.md](./docs/agent-send.md).
 
 Custom domain target: [`track.greatindiancompany.com`](https://track.greatindiancompany.com) (attach after deploy; not required to merge or to run on `*.workers.dev`).
