@@ -63,7 +63,18 @@ When `track` is on (default):
 - The office needs a **raw / MIME / SMTP-capable** send (Gmail `gmail.send` + `{ raw }`, Outlook Graph MIME, or SMTP `DATA`). `htmlBody`-class paths are banned for tracked mail.
 - No such path → the office cannot deliver a surviving pixel. AMT will not send for you. Do not wait on upstream connector vendors to stop stripping `<img>`.
 
+## Reference implementation
+
+[`client/`](../client/index.ts) in this repo is the reference `sendTrackedEmail`:
+
+1. `mintTrackedMessage` → `POST /v1/messages` (always sends `from` when provided).
+2. `via: "smtp"` → `sendRawMimeSmtp` (`raw_mime` as DATA), or `via: "gmail_raw"` → `sendRawGmail` (`raw_base64url`).
+3. **Never** `htmlBody` / `textBody`. Those paths throw.
+
+CLI: `npm run send-tracked -- --to …` (env `AMT_API_KEY`, `AMT_BASE_URL`, `SMTP_*` or `GMAIL_ACCESS_TOKEN`). Quickest working path is **client + SMTP**. See [agent-send.md](./agent-send.md). AMT stays mint+track; it is not Postal ([compare-postal.md](./compare-postal.md)).
+
 ## See also
 
-- [agent-send.md](./agent-send.md) — mint fields, Gmail raw curl/Python, SMTP
+- [agent-send.md](./agent-send.md) — mint fields, client/CLI, Gmail raw curl/Python, SMTP
 - [api.md](./api.md) — `POST /v1/messages` / `GET /v1/messages/:id`
+- [compare-postal.md](./compare-postal.md) — why AMT is not an MTA

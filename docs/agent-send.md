@@ -4,7 +4,27 @@ Open tracking is the product. It only works if the HTML **1×1 `<img src="{base}
 
 This Worker does **not** send mail. `POST /v1/messages` instruments content and returns a ready-to-send RFC822 payload.
 
-**Grok Bot / office:** wrap this flow in a default-on `sendTrackedEmail` shim so agents never opt-in mint. AMT still does not send — the office shim must. Spec: [send-tracked-email-shim.md](./send-tracked-email-shim.md).
+**Quickest working path:** in-repo Node client / CLI — mint, then SMTP `DATA` of `raw_mime` (iCloud `smtp.mail.me.com:587` is the proven path when `from` matches the mailbox). **Never** Gmail MCP `htmlBody`.
+
+```ts
+import { sendTrackedEmail } from "../client/index.ts";
+await sendTrackedEmail({
+  baseUrl: process.env.AMT_BASE_URL!, apiKey: process.env.AMT_API_KEY!,
+  to: "ada@example.com", from: "you@icloud.com",
+  subject: "Hello", text: "Hi Ada — see https://example.com/docs",
+  via: "smtp", smtp: { host: "smtp.mail.me.com", port: 587, user: process.env.SMTP_USER!, pass: process.env.SMTP_PASS! },
+});
+```
+
+```bash
+export AMT_BASE_URL=https://track.greatindiancompany.com
+export AMT_API_KEY=…          # Worker API_KEY; not a mailbox password
+export SMTP_HOST=smtp.mail.me.com SMTP_PORT=587
+export SMTP_USER=you@icloud.com SMTP_PASS=…   # app password; never commit
+npm run send-tracked -- --to ada@example.com --from you@icloud.com --subject Hello --text "Hi Ada"
+```
+
+`client/` is the reference `sendTrackedEmail` implementation (mint always passes `from` when set; send is `smtp` | `gmail_raw` only). Spec: [send-tracked-email-shim.md](./send-tracked-email-shim.md). AMT is not Postal; see [compare-postal.md](./compare-postal.md).
 
 ## Do not use Gmail connector `htmlBody`
 
@@ -115,11 +135,23 @@ send_req = urllib.request.Request(
 print(json.load(urllib.request.urlopen(send_req)))
 ```
 
-Scope needed for the Gmail call: `https://www.googleapis.com/auth/gmail.send` (or a broader Gmail scope you already use). This repo never stores mailbox secrets.
+Scope needed for the Gmail call: `https://www.googleapis.com/auth/gmail.send` (or a broader Gmail scope you already use). This repo never stores mailbox secrets and does not ship an OAuth UI — pass `GMAIL_ACCESS_TOKEN` or a `googleauth` object with `getAccessToken()`.
+
+```ts
+import { sendTrackedEmail } from "../client/index.ts";
+await sendTrackedEmail({
+  baseUrl: process.env.AMT_BASE_URL!, apiKey: process.env.AMT_API_KEY!,
+  to: "ada@example.com", from: "you@gmail.com",
+  subject: "Hello", text: "Hi Ada",
+  via: "gmail_raw", gmail: { accessToken: process.env.GMAIL_ACCESS_TOKEN! },
+});
+```
 
 ## SMTP
 
 Pipe `raw_mime` as the message DATA (already has headers and CRLF). Any hop that HTML-sanitizes will drop the pixel the same way `htmlBody` does.
+
+Reference: `sendRawMimeSmtp` / `sendTrackedEmail({ via: "smtp" })` in [`client/`](../client/index.ts). Pass `from` on mint so the RFC822 `From` matches the authenticated mailbox (required for iCloud). Prefer the client/CLI over hand-rolled `DATA`.
 
 ## After send
 
