@@ -4,9 +4,25 @@
 
 AMT is the **bridge** when we cannot change upstream connectors (Grok Bot / xAI, ChatGPT, Claude, Outlook MCP, Gmail MCP, …). Those often sanitize `htmlBody` and strip `<img>`, or expose no raw send. AMT does **not** replace Gmail or Outlook — it mints instrumented MIME (`raw_mime` / `raw_base64url`) so any office can wrap send.
 
-Open-source, self-hostable. A Cloudflare Worker instruments content; opens and clicks land in D1. Agents poll JSON. Humans get a thin dashboard. This Worker **does not send email**.
+Open-source, self-hostable. A Cloudflare Worker instruments content; opens and clicks land in D1. Agents poll JSON. Humans get a thin dashboard. This Worker **does not send email**. The in-repo `client/` + `npm run send-tracked` wrap mint → SMTP / Gmail raw so agents can actually deliver the pixel.
 
-**Office shim:** default-on `sendTrackedEmail` — mint, then send via that provider’s img-preserving path (Gmail raw, Outlook Graph MIME, SMTP DATA). Agents never mint by hand. Spec: [docs/send-tracked-email-shim.md](./docs/send-tracked-email-shim.md).
+**Office shim:** default-on `sendTrackedEmail` — mint, then send via that provider’s img-preserving path (Gmail raw, Outlook Graph MIME, SMTP DATA). Agents never mint by hand. Spec: [docs/send-tracked-email-shim.md](./docs/send-tracked-email-shim.md). Reference implementation: [`client/`](./client/index.ts) (`npm run send-tracked`).
+
+## Quickest working path (agent send)
+
+Use the Node client: mint, then SMTP `DATA` of `raw_mime`. **Never** `htmlBody` (Gmail/Outlook connectors strip `<img>` and opens stay `no_signal`).
+
+```ts
+import { sendTrackedEmail } from "./client/index.ts";
+await sendTrackedEmail({
+  baseUrl: process.env.AMT_BASE_URL!, apiKey: process.env.AMT_API_KEY!,
+  to: "ada@example.com", from: "you@icloud.com",
+  subject: "Hello", text: "Hi Ada — see https://example.com/docs",
+  via: "smtp", smtp: { host: "smtp.mail.me.com", port: 587, user: process.env.SMTP_USER!, pass: process.env.SMTP_PASS! },
+});
+```
+
+CLI: `npm run send-tracked -- --to ada@example.com --from you@icloud.com --subject Hello --text "Hi"`. Env: `AMT_API_KEY`, `AMT_BASE_URL`, `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` (or `GMAIL_ACCESS_TOKEN` + `--via gmail_raw`; needs `gmail.send`). Details: [docs/agent-send.md](./docs/agent-send.md). AMT vs Postal (MTA): [docs/compare-postal.md](./docs/compare-postal.md).
 
 > **Industry class: MCP / connector `htmlBody` strips the open pixel.** Compose helpers (Gmail MCP `send_message` / `create_draft`, Outlook MCP JSON body, similar tools) sanitize HTML and drop `<img>`. Inbox UNREAD can still clear; AMT stays `no_signal`. **Do not** send returned `html` through `htmlBody`. Use `raw_mime` / `raw_base64url`. Not Gmail-only — Outlook Graph send MIME is first-class next (same mint; not wired in this Worker). See [docs/agent-send.md](./docs/agent-send.md).
 
@@ -14,10 +30,10 @@ Custom domain target: [`track.greatindiancompany.com`](https://track.greatindian
 
 ## Non-goals (v0)
 
-- Sending mail (Gmail API, Outlook Graph, SMTP, ESP wrappers)
+- Worker sending mail — this Worker never talks SMTP/Gmail/Graph. A **reference Node client** (`client/`) mints then sends through *your* mailbox. AMT is mint+track, not an MTA ([Postal comparison](./docs/compare-postal.md)).
 - Chrome extension
 - MCP server
-- Docker-first path
+- Docker-first path / running a mail server
 - SaaS multi-tenant billing
 - Reply detection (`replied` is a stub field)
 - Copying [WhoReadMe](https://github.com/the-code-learner/WhoReadMe) (design-only, non-commercial — see [CREDITS.md](./CREDITS.md))
@@ -90,7 +106,7 @@ npm run deploy                    # wrangler deploy
 
 `wrangler.jsonc` ships with a placeholder `database_id`. Replace it with the UUID printed by `d1 create` before a remote deploy. Local `wrangler dev` works with the placeholder after `npm run db:migrate`.
 
-Scripts: `deploy`, `db:migrate`, `types`, `check` (`tsc` + tests), `test`.
+Scripts: `deploy`, `db:migrate`, `types`, `check` (`tsc` + tests), `test`, `send-tracked` (mint + SMTP/Gmail raw; no secrets in git).
 
 ### Custom domain (`track.greatindiancompany.com`)
 
@@ -141,6 +157,7 @@ Hit `pixel_url` (`GET /o/:token`) and a `tracked_url` (`GET /c/:token`) to recor
 npm test
 npm run check
 npm run dev
+npm run send-tracked -- --help
 ```
 
 ## License
