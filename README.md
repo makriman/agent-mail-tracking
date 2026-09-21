@@ -24,6 +24,18 @@ await sendTrackedEmail({
 
 CLI: `npm run send-tracked -- --to ada@example.com --from you@icloud.com --subject Hello --text "Hi"`. Env: `AMT_API_KEY`, `AMT_BASE_URL`, `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` (or `GMAIL_ACCESS_TOKEN` + `--via gmail_raw`; needs `gmail.send`). Details: [docs/agent-send.md](./docs/agent-send.md). AMT vs Postal (MTA): [docs/compare-postal.md](./docs/compare-postal.md).
 
+### Researcher GTM: batch wave prepare (mint-only)
+
+For a **500-row** cold-wave sheet, mint first so every row logs an AMT `message_id` (Sheet sync can come later). **`--mint-only` does not send mail.** AMT stays mint+track; this is not Postal.
+
+```bash
+# wave.csv columns: to, subject, text  (optional from, mode, html, metadata_json)
+npm run send-tracked-batch -- --csv wave.csv --out wave-minted.csv --mint-only
+# default --delay-ms 1000; row errors are fail-soft. Optional: --raw-dir ./wave-raw
+```
+
+Output appends `message_id`, `pixel_url`, `status` (`minted` | `sent` | `error`), `error`, `via`, `sent_at`. To mint **and** send in one pass (still your mailbox, not an MTA): `--via smtp` or `--via gmail_raw` instead of `--mint-only`. Single-send CLI is unchanged: `npm run send-tracked`. See [docs/agent-send.md](./docs/agent-send.md#researcher-gtm--batch-wave-prepare).
+
 > **Industry class: MCP / connector `htmlBody` strips the open pixel.** Compose helpers (Gmail MCP `send_message` / `create_draft`, Outlook MCP JSON body, similar tools) sanitize HTML and drop `<img>`. Inbox UNREAD can still clear; AMT stays `no_signal`. **Do not** send returned `html` through `htmlBody`. Use `raw_mime` / `raw_base64url`. Not Gmail-only — Outlook Graph send MIME is first-class next (same mint; not wired in this Worker). See [docs/agent-send.md](./docs/agent-send.md).
 
 Custom domain target: [`track.greatindiancompany.com`](https://track.greatindiancompany.com) (attach after deploy; not required to merge or to run on `*.workers.dev`).
@@ -106,7 +118,7 @@ npm run deploy                    # wrangler deploy
 
 `wrangler.jsonc` ships with a placeholder `database_id`. Replace it with the UUID printed by `d1 create` before a remote deploy. Local `wrangler dev` works with the placeholder after `npm run db:migrate`.
 
-Scripts: `deploy`, `db:migrate`, `types`, `check` (`tsc` + tests), `test`, `send-tracked` (mint + SMTP/Gmail raw; no secrets in git).
+Scripts: `deploy`, `db:migrate`, `types`, `check` (`tsc` + tests), `test`, `send-tracked` (one mint + SMTP/Gmail raw), `send-tracked-batch` (CSV wave; `--mint-only` or `--via`; no secrets in git).
 
 ### Custom domain (`track.greatindiancompany.com`)
 
@@ -158,6 +170,7 @@ npm test
 npm run check
 npm run dev
 npm run send-tracked -- --help
+npm run send-tracked-batch -- --help
 ```
 
 ## License

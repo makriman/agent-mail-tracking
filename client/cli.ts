@@ -234,7 +234,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
 }
 
-const invokedDirectly = process.argv[1]?.endsWith("cli.ts") === true || process.argv[1]?.endsWith("client/cli") === true;
+const invokedDirectly = process.argv[1]?.replace(/\\/g, "/").split("/").pop() === "cli.ts" || process.argv[1]?.endsWith("/client/cli") === true;
 if (invokedDirectly) {
   main().then((code) => process.exit(code));
 }

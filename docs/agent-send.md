@@ -156,3 +156,37 @@ Reference: `sendRawMimeSmtp` / `sendTrackedEmail({ via: "smtp" })` in [`client/`
 ## After send
 
 Poll `GET /v1/messages/{message_id}`. First successful image fetch is an `open` (`GET /o/:token` → 1×1 GIF). Clicks are `GET /c/:token` → 302; useful, but secondary to opens.
+
+## Researcher GTM / batch wave prepare
+
+Cold waves (Researcher GTM) need a `message_id` on every row so opens can be joined later (Sheet sync is a follow-on). Use the batch runner — **mint+track only**; it is not an MTA and never uses `htmlBody`.
+
+**Prepare a 500-row sheet (no send):**
+
+```bash
+# wave.csv — header required. Minimum columns: to, subject, text
+# optional: from, mode, html, metadata_json
+npm run send-tracked-batch -- --csv wave.csv --out wave-minted.csv --mint-only
+```
+
+`--mint-only` calls `POST /v1/messages` for each row and writes `message_id` + `pixel_url`. It does **not** speak SMTP or Gmail. Default `--delay-ms 1000` paces a 500-row prepare; a row-level mint error is logged (`status=error`) and the rest continue.
+
+Optional `--raw-dir ./wave-raw` writes `<message_id>.eml` (`raw_mime`) and a `raw_path` column — useful if a later job will send the already-minted RFC822. Do not remint the same wave if you need those IDs to stay stable.
+
+**Mint + send in one pass** (your mailbox, still not Postal):
+
+```bash
+npm run send-tracked-batch -- --csv wave.csv --out wave-sent.csv --via smtp --delay-ms 1000
+# or: --via gmail_raw   (GMAIL_ACCESS_TOKEN, scope gmail.send)
+```
+
+Output CSV keeps input columns and **appends**: `message_id`, `pixel_url`, `status` (`minted` | `sent` | `error`), `error`, `via`, `sent_at`. If mint succeeds and send fails, `message_id` is still written (`status=error`). Same env as `send-tracked`. Single-row CLI is unchanged (`npm run send-tracked`).
+
+Example input row:
+
+```csv
+to,subject,text,from,mode,metadata_json
+ada@lab.edu,Quick question on your preprint,"Hi Ada — I read your paper. See https://example.com/collab",you@icloud.com,plain_looking,"{""wave"":""gtm-2026-09""}"
+```
+
+Programmatic: `runBatch` / `parseCsvRecords` in [`client/batch.ts`](../client/batch.ts). Never `htmlBody`. Never commit SMTP passwords or OAuth tokens.
