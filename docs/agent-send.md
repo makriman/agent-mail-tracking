@@ -156,3 +156,41 @@ Reference: `sendRawMimeSmtp` / `sendTrackedEmail({ via: "smtp" })` in [`client/`
 ## After send
 
 Poll `GET /v1/messages/{message_id}`. First successful image fetch is an `open` (`GET /o/:token` → 1×1 GIF). Clicks are `GET /c/:token` → 302; useful, but secondary to opens.
+
+## Researcher GTM / batch wave prepare
+
+eSlams Researcher GTM (prepare-only): mint AMT `amt_message_id`s onto the mailmerge sheet so opens can be joined later (Sheet sync is a follow-on). **`--mint-only` does not send.** Not an MTA. Never `htmlBody`. Bodies have **no URLs** — do not invent links; click tracking is N/A.
+
+**Prepare MAILMERGE-E1 (no send):**
+
+```bash
+# Shared box path (not required for repo tests — tests use test/fixtures/mailmerge-e1.csv)
+npm run send-tracked-batch -- \
+  --csv /workspace/eslams-outbound-500/MAILMERGE-E1.csv \
+  --out /workspace/eslams-outbound-500/AMT-LOG-E1.csv \
+  --mint-only \
+  --touch E1 \
+  --campaign eslams-researcher-lowstakes-2026-09 \
+  --from makriman@berkeley.edu
+```
+
+| Flag | Value |
+| --- | --- |
+| `--mint-only` | mint `POST /v1/messages` only; no SMTP/Gmail |
+| `--touch` | `E1` \| `E2` \| `E3` |
+| `--campaign` | default `eslams-researcher-lowstakes-2026-09` |
+| `--from` / `AMT_FROM` | `makriman@berkeley.edu` |
+| `--delay-ms` | default `1000`; row errors fail-soft |
+
+**Mailmerge columns** (map: `email`→`to`, `body_text`→`text` with `mode=plain_looking`, `subject`→`subject`):
+
+```csv
+send_batch_order,contact_id,first_name,email,subject,body_text
+1,c_ada,Ada,ada@lab.edu,Quick question on your preprint,"Hi Ada — I read your paper on low-stakes assessment. Would you have 20 minutes to compare notes?"
+```
+
+Log CSV **keeps input columns** and appends: `campaign`, `touch`, `amt_message_id`, `sent_at`, `open_status`, `open_at`, `bounce_or_error`. At prepare, `sent_at` / `open_status` / `open_at` are empty; mint/send failures go in `bounce_or_error` ( `amt_message_id` is still written if mint succeeded).
+
+Optional `--raw-dir ./wave-raw` writes `<message_id>.eml`. Do not remint the same wave if those IDs must stay stable. To mint **and** send later (your mailbox, still not Postal): drop `--mint-only` and pass `--via smtp` or `--via gmail_raw`. Single-row CLI is unchanged (`npm run send-tracked`).
+
+Programmatic: `runBatch` / `parseCsvRecords` in [`client/batch.ts`](../client/batch.ts). Never `htmlBody`. Never commit SMTP passwords or OAuth tokens.

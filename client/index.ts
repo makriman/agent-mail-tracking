@@ -17,6 +17,29 @@ export {
 } from "./gmail";
 export { sendTrackedEmail } from "./send";
 export type { SendTrackedEmailOptions, SendTrackedEmailResult, SmtpTransport } from "./send";
+export {
+  runBatch,
+  parseCsv,
+  parseCsvRecords,
+  stringifyCsv,
+  stringifyCsvRecords,
+  csvEscape,
+  parseDelayMs,
+  parseTouch,
+  parseCampaign,
+  mergeHeaders,
+  resolveRecipient,
+  resolveBodyText,
+  RESULT_COLUMNS,
+  LOG_COLUMNS,
+  RAW_PATH_COLUMN,
+  PIXEL_URL_COLUMN,
+  MAILMERGE_COLUMNS,
+  DEFAULT_CAMPAIGN,
+  TOUCHES,
+  BATCH_USAGE,
+} from "./batch";
+export type { RunBatchOptions, BatchRunResult, BatchSummary, BatchStatus, BatchRunnerDeps, BatchSmtpConfig, Touch } from "./batch";
 export type {
   Mode,
   SendVia,

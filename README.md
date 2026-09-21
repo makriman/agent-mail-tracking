@@ -24,6 +24,24 @@ await sendTrackedEmail({
 
 CLI: `npm run send-tracked -- --to ada@example.com --from you@icloud.com --subject Hello --text "Hi"`. Env: `AMT_API_KEY`, `AMT_BASE_URL`, `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS` (or `GMAIL_ACCESS_TOKEN` + `--via gmail_raw`; needs `gmail.send`). Details: [docs/agent-send.md](./docs/agent-send.md). AMT vs Postal (MTA): [docs/compare-postal.md](./docs/compare-postal.md).
 
+### Researcher GTM: eSlams batch wave prepare (mint-only)
+
+For the **eSlams Researcher GTM** 500-row cold wave, mint first so every mailmerge row logs an AMT `amt_message_id` (Sheet sync later). **`--mint-only` does not send mail.** Bodies have **no URLs** — do not invent links (click tracking N/A). Never `htmlBody`. AMT stays mint+track; this is not Postal.
+
+Mailmerge columns: `send_batch_order,contact_id,first_name,email,subject,body_text` (map `email`→`to`, `body_text`→`text` / `plain_looking`, `subject`→`subject`). `from` is `makriman@berkeley.edu` via `--from` / `AMT_FROM`.
+
+```bash
+npm run send-tracked-batch -- \
+  --csv /workspace/eslams-outbound-500/MAILMERGE-E1.csv \
+  --out /workspace/eslams-outbound-500/AMT-LOG-E1.csv \
+  --mint-only --touch E1 \
+  --campaign eslams-researcher-lowstakes-2026-09 \
+  --from makriman@berkeley.edu
+# default --delay-ms 1000; row errors are fail-soft
+```
+
+Log CSV keeps input columns and appends `campaign`, `touch`, `amt_message_id`, `sent_at`, `open_status`, `open_at`, `bounce_or_error` (`open_*` empty at prepare). Single-send CLI is unchanged: `npm run send-tracked`. See [docs/agent-send.md](./docs/agent-send.md#researcher-gtm--batch-wave-prepare).
+
 > **Industry class: MCP / connector `htmlBody` strips the open pixel.** Compose helpers (Gmail MCP `send_message` / `create_draft`, Outlook MCP JSON body, similar tools) sanitize HTML and drop `<img>`. Inbox UNREAD can still clear; AMT stays `no_signal`. **Do not** send returned `html` through `htmlBody`. Use `raw_mime` / `raw_base64url`. Not Gmail-only — Outlook Graph send MIME is first-class next (same mint; not wired in this Worker). See [docs/agent-send.md](./docs/agent-send.md).
 
 Custom domain target: [`track.greatindiancompany.com`](https://track.greatindiancompany.com) (attach after deploy; not required to merge or to run on `*.workers.dev`).
@@ -106,7 +124,7 @@ npm run deploy                    # wrangler deploy
 
 `wrangler.jsonc` ships with a placeholder `database_id`. Replace it with the UUID printed by `d1 create` before a remote deploy. Local `wrangler dev` works with the placeholder after `npm run db:migrate`.
 
-Scripts: `deploy`, `db:migrate`, `types`, `check` (`tsc` + tests), `test`, `send-tracked` (mint + SMTP/Gmail raw; no secrets in git).
+Scripts: `deploy`, `db:migrate`, `types`, `check` (`tsc` + tests), `test`, `send-tracked` (one mint + SMTP/Gmail raw), `send-tracked-batch` (eSlams mailmerge; `--mint-only --touch E1 --from …`; no secrets in git).
 
 ### Custom domain (`track.greatindiancompany.com`)
 
@@ -158,6 +176,7 @@ npm test
 npm run check
 npm run dev
 npm run send-tracked -- --help
+npm run send-tracked-batch -- --help
 ```
 
 ## License

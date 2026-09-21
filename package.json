@@ -13,7 +13,8 @@
     "types": "wrangler types",
     "check": "tsc --noEmit && tsc --noEmit -p client/tsconfig.json && vitest run",
     "test": "vitest run",
-    "send-tracked": "tsx client/cli.ts"
+    "send-tracked": "tsx client/cli.ts",
+    "send-tracked-batch": "tsx client/batch-cli.ts"
   },
   "engines": {
     "node": ">=20"
