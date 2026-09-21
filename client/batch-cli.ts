@@ -1,22 +1,25 @@
 #!/usr/bin/env node
 /**
- * CLI for client/batch.ts — Researcher GTM mint-only prepare / mint+send waves.
+ * CLI for eSlams Researcher GTM mailmerge waves (prepare-only: --mint-only).
  *
- *   npm run send-tracked-batch -- --csv in.csv --out out.csv --mint-only
+ *   npm run send-tracked-batch -- --csv /workspace/eslams-outbound-500/MAILMERGE-E1.csv --out amt-log-e1.csv --mint-only --touch E1 --from makriman@berkeley.edu
  *
- * Never htmlBody. Never commit mailbox secrets.
+ * Never htmlBody. Never invent links. Never commit mailbox secrets.
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import {
   BATCH_USAGE,
+  LOG_COLUMNS,
+  PIXEL_URL_COLUMN,
   RAW_PATH_COLUMN,
-  RESULT_COLUMNS,
   cell,
   errorText,
   mergeHeaders,
+  parseCampaign,
   parseCsvRecords,
   parseDelayMs,
+  parseTouch,
   runBatch,
   stringifyCsv,
 } from "./batch";
@@ -25,7 +28,7 @@ import { HTML_BODY_BANNED } from "./guard";
 import { sendRawGmail } from "./gmail";
 import { sendRawMimeSmtp } from "./smtp";
 import type { SmtpTransport } from "./send";
-import { type GmailAuth, type Mode, type SendVia } from "./types";
+import { type GmailAuth, type SendVia } from "./types";
 
 async function writeRawToDir(dir: string, messageId: string, rawMime: string): Promise<string> {
   await fs.mkdir(dir, { recursive: true });
@@ -77,10 +80,17 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   const mintOnly = flags["mint-only"] === true || flags["mint-only"] === "true" || flags["mint-only"] === "1";
   const apiKey = str(flags, "api-key", "AMT_API_KEY");
   const baseUrl = str(flags, "base-url", "AMT_BASE_URL") ?? "https://track.greatindiancompany.com";
-  const defaultFrom =
-    str(flags, "from", "AMT_FROM") ?? (process.env.SMTP_USER?.includes("@") ? process.env.SMTP_USER : undefined);
-  const defaultMode = str(flags, "mode") as Mode | undefined;
+  const defaultFrom = str(flags, "from", "AMT_FROM");
   const rawDir = str(flags, "raw-dir");
+
+  let touch: string;
+  try {
+    touch = parseTouch(str(flags, "touch"));
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : "missing --touch (E1 | E2 | E3)");
+    return 1;
+  }
+  const campaign = parseCampaign(str(flags, "campaign"));
 
   let via = str(flags, "via") as SendVia | undefined;
   if (!mintOnly && !via) {
@@ -91,8 +101,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     console.error("missing AMT_API_KEY (or --api-key)");
     return 1;
   }
-  if (defaultMode && defaultMode !== "plain_looking" && defaultMode !== "plain_only" && defaultMode !== "html") {
-    console.error("invalid --mode (plain_looking | plain_only | html)");
+  if (!defaultFrom) {
+    console.error("missing --from or AMT_FROM (e.g. makriman@berkeley.edu)");
     return 1;
   }
   if (!mintOnly && via !== "smtp" && via !== "gmail_raw") {
@@ -158,7 +168,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     return 1;
   }
 
-  const extra = [...RESULT_COLUMNS, ...(rawDir ? [RAW_PATH_COLUMN] : [])];
+  const extra = [...LOG_COLUMNS, PIXEL_URL_COLUMN, ...(rawDir ? [RAW_PATH_COLUMN] : [])];
   const outHeaders = mergeHeaders(parsed.headers, extra);
   await fs.mkdir(path.dirname(path.resolve(outPath)), { recursive: true });
   await fs.writeFile(outPath, stringifyCsv([outHeaders]), "utf8");
@@ -170,7 +180,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     via: mintOnly ? "" : via,
     delayMs,
     defaultFrom,
-    defaultMode,
+    defaultMode: "plain_looking",
+    campaign,
+    touch,
     baseUrl,
     apiKey,
     smtp,
@@ -182,10 +194,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     },
     onRow: async (combined, index) => {
       await fs.appendFile(outPath, stringifyCsv([outHeaders.map((h) => combined[h] ?? "")]), "utf8");
-      const to = cell(combined, "to") || "?";
-      console.error(
-        `[${index + 1}/${parsed.records.length}] ${to} ${combined.status}${combined.error ? ` ${combined.error}` : ""}`,
-      );
+      const who = cell(combined, "email") || cell(combined, "to") || "?";
+      const err = combined.bounce_or_error ? ` ${combined.bounce_or_error}` : "";
+      const id = combined.amt_message_id || "-";
+      console.error(`[${index + 1}/${parsed.records.length}] ${who} ${id}${err}`);
     },
   });
 
@@ -201,6 +213,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         out: outPath,
         mint_only: mintOnly,
         via: mintOnly ? undefined : via,
+        campaign,
+        touch,
         delay_ms: delayMs,
       },
       null,

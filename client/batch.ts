@@ -1,11 +1,11 @@
 /**
- * Batch mint (+ optional send) for Researcher GTM cold waves.
+ * Batch mint (+ optional send) for eSlams Researcher GTM cold waves (prepare-only first).
  *
- *   npm run send-tracked-batch -- --csv in.csv --out out.csv --mint-only
- *   npm run send-tracked-batch -- --csv in.csv --out out.csv --via smtp
+ *   npm run send-tracked-batch -- --csv MAILMERGE-E1.csv --out amt-log-e1.csv --mint-only --touch E1 --from makriman@berkeley.edu
  *
- * Logs every row’s AMT message_id. Does not turn AMT into an MTA.
- * htmlBody is banned. CLI entry: client/batch-cli.ts. Never commit mailbox secrets.
+ * Mailmerge input: send_batch_order,contact_id,first_name,email,subject,body_text
+ * Map: email→to, body_text→text (plain_looking), subject→subject. Do not invent links.
+ * htmlBody is banned. CLI: client/batch-cli.ts. Never commit mailbox secrets.
  */
 import { HTML_BODY_BANNED, assertNoHtmlBody } from "./guard";
 import { mintTrackedMessage } from "./mint";
@@ -21,40 +21,69 @@ import {
   type SmtpSendResult,
 } from "./types";
 
-export const RESULT_COLUMNS = ["message_id", "pixel_url", "status", "error", "via", "sent_at"] as const;
+export const DEFAULT_CAMPAIGN = "eslams-researcher-lowstakes-2026-09";
+export const TOUCHES = ["E1", "E2", "E3"] as const;
+export type Touch = (typeof TOUCHES)[number];
+
+/** eSlams mailmerge send sheet (shared box: /workspace/eslams-outbound-500/MAILMERGE-E1.csv). */
+export const MAILMERGE_COLUMNS = [
+  "send_batch_order",
+  "contact_id",
+  "first_name",
+  "email",
+  "subject",
+  "body_text",
+] as const;
+
+/** Handoff log columns (keep all input cols, then append these). */
+export const LOG_COLUMNS = [
+  "campaign",
+  "touch",
+  "amt_message_id",
+  "sent_at",
+  "open_status",
+  "open_at",
+  "bounce_or_error",
+] as const;
+
+export const RESULT_COLUMNS = LOG_COLUMNS;
 export const RAW_PATH_COLUMN = "raw_path";
+export const PIXEL_URL_COLUMN = "pixel_url";
 
 export type BatchStatus = "minted" | "sent" | "error";
 
 /** SMTP mailbox config (send path). Same fields as sendTrackedEmail smtp, minus envelope. */
 export type BatchSmtpConfig = Pick<SmtpSendOptions, "host" | "port" | "user" | "pass" | "secure" | "timeoutMs" | "ehloName">;
 
-export const BATCH_USAGE = `Usage: npm run send-tracked-batch -- --csv in.csv --out out.csv [options]
+export const BATCH_USAGE = `Usage: npm run send-tracked-batch -- --csv MAILMERGE-E1.csv --out amt-log-e1.csv [options]
 
-Mint (POST /v1/messages) for every CSV row, optionally send raw MIME.
+eSlams Researcher GTM prepare: mint AMT message_ids for a mailmerge sheet. No send.
 AMT stays mint+track — this runner is not Postal/an MTA.
-Never uses htmlBody (Gmail/Outlook connectors strip the open pixel).
+Never uses htmlBody. Bodies have no URLs — do not invent links (click tracking N/A).
 
 Required:
-  --csv <path>            input CSV
-  --out <path>            output CSV (input columns + result columns)
+  --csv <path>            mailmerge CSV (e.g. /workspace/eslams-outbound-500/MAILMERGE-E1.csv)
+  --out <path>            log CSV (input columns + handoff columns)
+  --touch E1|E2|E3
+  --from <email>          or AMT_FROM (e.g. makriman@berkeley.edu)
 
-Mode:
-  --mint-only             mint only; write message_id + pixel_url; do not send
-  --via smtp|gmail_raw    mint then send (required unless --mint-only)
+Prepare:
+  --mint-only             mint only; write amt_message_id; do not SMTP/Gmail send
+  --campaign <slug>       default eslams-researcher-lowstakes-2026-09
   --delay-ms <n>          pause between rows (default 1000)
   --raw-dir <path>        optional: write each raw_mime to <dir>/<message_id>.eml
+  --via smtp|gmail_raw    mint then send (omit when --mint-only)
 
-Input columns (header row):
-  to, subject, text       required except text may be omitted when mode=html
-  from, mode, html, metadata_json   optional
+Mailmerge columns:
+  send_batch_order,contact_id,first_name,email,subject,body_text
+  Map: email→to, body_text→text (mode=plain_looking), subject→subject
 
-Output appends:
-  message_id, pixel_url, status (minted|sent|error), error, via, sent_at
-  raw_path                when --raw-dir is set
+Log CSV appends:
+  campaign, touch, amt_message_id, sent_at, open_status, open_at, bounce_or_error
+  (open_status / open_at stay empty at prepare; Sheet sync later)
 
-Row errors are fail-soft (logged, next row continues). Config errors abort.
-Same env as send-tracked: AMT_API_KEY, AMT_BASE_URL, AMT_FROM, SMTP_*, GMAIL_ACCESS_TOKEN.
+Row errors are fail-soft (bounce_or_error, next row continues). Config errors abort.
+Env: AMT_API_KEY, AMT_BASE_URL, AMT_FROM, SMTP_*, GMAIL_ACCESS_TOKEN.
 Do not put mailbox passwords or OAuth tokens in git or Worker secrets.
 `;
 
@@ -174,6 +203,28 @@ export function errorText(err: unknown): string {
   return String(err);
 }
 
+export function parseTouch(raw: string | undefined): Touch {
+  const v = (raw ?? "").trim().toUpperCase();
+  if (v !== "E1" && v !== "E2" && v !== "E3") {
+    throw new AmtClientError("invalid --touch (E1 | E2 | E3)");
+  }
+  return v;
+}
+
+export function parseCampaign(raw: string | undefined): string {
+  const v = (raw ?? "").trim();
+  return v || DEFAULT_CAMPAIGN;
+}
+
+/** Mailmerge: email→to, body_text→text. Legacy: to / text still accepted. */
+export function resolveRecipient(rec: Record<string, string>): string {
+  return (cell(rec, "email") || cell(rec, "to")).trim();
+}
+
+export function resolveBodyText(rec: Record<string, string>): string {
+  return cell(rec, "body_text") || cell(rec, "text");
+}
+
 function parseMetadataJson(raw: string): Record<string, unknown> | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
@@ -219,6 +270,8 @@ export interface RunBatchOptions {
   delayMs: number;
   defaultFrom?: string;
   defaultMode?: Mode;
+  campaign?: string;
+  touch?: string;
   baseUrl: string;
   apiKey: string;
   smtp?: BatchSmtpConfig;
@@ -243,14 +296,16 @@ export interface BatchRunResult {
   summary: BatchSummary;
 }
 
-function emptyResult(): Record<string, string> {
+function emptyResult(opts: RunBatchOptions): Record<string, string> {
   return {
-    message_id: "",
-    pixel_url: "",
-    status: "",
-    error: "",
-    via: "",
+    campaign: parseCampaign(opts.campaign),
+    touch: opts.touch ?? "",
+    amt_message_id: "",
     sent_at: "",
+    open_status: "",
+    open_at: "",
+    bounce_or_error: "",
+    pixel_url: "",
   };
 }
 
@@ -262,28 +317,39 @@ async function processRow(
   rec: Record<string, string>,
   opts: RunBatchOptions,
   deps: Required<Pick<BatchRunnerDeps, "mint" | "sendSmtp" | "sendGmail" | "nowIso">> & BatchRunnerDeps,
-): Promise<Record<string, string>> {
-  const out = emptyResult();
-  if (opts.via) out.via = opts.via;
+): Promise<Record<string, string> & { _status: BatchStatus }> {
+  const out = emptyResult(opts);
 
   try {
     assertNoHtmlBody(rec);
     if (rowHasBannedBody(rec)) throw new AmtClientError(HTML_BODY_BANNED);
 
-    const to = cell(rec, "to").trim();
+    const to = resolveRecipient(rec);
     const from = (cell(rec, "from").trim() || opts.defaultFrom || "").trim() || undefined;
     const subject = cell(rec, "subject") || undefined;
-    const text = cell(rec, "text") || undefined;
+    const text = resolveBodyText(rec) || undefined;
     const html = cell(rec, "html") || undefined;
-    const mode = parseMode(cell(rec, "mode")) ?? opts.defaultMode;
-    const metadata = parseMetadataJson(cell(rec, "metadata_json"));
+    const mode = parseMode(cell(rec, "mode")) ?? opts.defaultMode ?? "plain_looking";
+    const extraMeta = parseMetadataJson(cell(rec, "metadata_json"));
+    const campaign = parseCampaign(opts.campaign);
+    const touch = opts.touch ?? "";
+    const metadata: Record<string, unknown> = {
+      ...extraMeta,
+      campaign,
+      ...(touch ? { touch } : {}),
+      contact_id: cell(rec, "contact_id") || undefined,
+      send_batch_order: cell(rec, "send_batch_order") || undefined,
+    };
+    for (const [k, v] of Object.entries(metadata)) {
+      if (v === undefined || v === "") delete metadata[k];
+    }
 
-    if (!to.includes("@")) throw new AmtClientError("to must be an email address");
-    if ((mode ?? "plain_looking") === "html" ? !html : !text) {
-      throw new AmtClientError(mode === "html" ? "missing html for mode=html" : "missing text");
+    if (!to.includes("@")) throw new AmtClientError("email/to must be an email address");
+    if (mode === "html" ? !html : !text) {
+      throw new AmtClientError(mode === "html" ? "missing html for mode=html" : "missing body_text/text");
     }
     if (!opts.mintOnly && opts.via === "smtp" && !from) {
-      throw new AmtClientError("from is required for SMTP MAIL FROM (column from, --from, or AMT_FROM)");
+      throw new AmtClientError("from is required for SMTP MAIL FROM (--from or AMT_FROM, e.g. makriman@berkeley.edu)");
     }
 
     const minted = await deps.mint({
@@ -300,8 +366,10 @@ async function processRow(
       trackingBaseUrl: opts.trackingBaseUrl,
     });
 
-    out.message_id = minted.message_id ?? "";
+    out.amt_message_id = minted.message_id ?? "";
     out.pixel_url = minted.pixel_url ?? "";
+    out.campaign = campaign;
+    if (touch) out.touch = touch;
 
     if (deps.writeRaw && minted.raw_mime) {
       const rawPath = await deps.writeRaw(minted.message_id, minted.raw_mime);
@@ -309,9 +377,7 @@ async function processRow(
     }
 
     if (opts.mintOnly) {
-      out.status = "minted";
-      out.via = "";
-      return out;
+      return { ...out, _status: "minted" };
     }
 
     if (opts.via === "smtp") {
@@ -337,14 +403,11 @@ async function processRow(
       throw new AmtClientError("invalid_via: expected smtp | gmail_raw, or pass --mint-only");
     }
 
-    out.status = "sent";
-    out.via = opts.via;
     out.sent_at = deps.nowIso();
-    return out;
+    return { ...out, _status: "sent" };
   } catch (err) {
-    out.status = "error";
-    out.error = errorText(err);
-    return out;
+    out.bounce_or_error = errorText(err);
+    return { ...out, _status: "error" };
   }
 }
 
@@ -358,7 +421,7 @@ export async function runBatch(opts: RunBatchOptions): Promise<BatchRunResult> {
     writeRaw: opts.deps?.writeRaw,
   };
 
-  const extra: string[] = [...RESULT_COLUMNS];
+  const extra: string[] = [...LOG_COLUMNS, PIXEL_URL_COLUMN];
   if (deps.writeRaw) extra.push(RAW_PATH_COLUMN);
   const headers = mergeHeaders(opts.headers, extra);
 
@@ -368,11 +431,12 @@ export async function runBatch(opts: RunBatchOptions): Promise<BatchRunResult> {
   for (let i = 0; i < opts.records.length; i++) {
     const rec = opts.records[i]!;
     const result = await processRow(rec, opts, deps);
+    const { _status, ...fields } = result;
     const combined = { ...rec };
-    for (const [k, v] of Object.entries(result)) combined[k] = v;
+    for (const [k, v] of Object.entries(fields)) combined[k] = v;
     records.push(combined);
-    if (result.status === "minted") summary.minted++;
-    else if (result.status === "sent") summary.sent++;
+    if (_status === "minted") summary.minted++;
+    else if (_status === "sent") summary.sent++;
     else summary.error++;
     await opts.onRow?.(combined, i);
     if (i < opts.records.length - 1) await deps.sleep(opts.delayMs);

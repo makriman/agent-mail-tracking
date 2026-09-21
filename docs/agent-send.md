@@ -159,34 +159,38 @@ Poll `GET /v1/messages/{message_id}`. First successful image fetch is an `open` 
 
 ## Researcher GTM / batch wave prepare
 
-Cold waves (Researcher GTM) need a `message_id` on every row so opens can be joined later (Sheet sync is a follow-on). Use the batch runner — **mint+track only**; it is not an MTA and never uses `htmlBody`.
+eSlams Researcher GTM (prepare-only): mint AMT `amt_message_id`s onto the mailmerge sheet so opens can be joined later (Sheet sync is a follow-on). **`--mint-only` does not send.** Not an MTA. Never `htmlBody`. Bodies have **no URLs** — do not invent links; click tracking is N/A.
 
-**Prepare a 500-row sheet (no send):**
-
-```bash
-# wave.csv — header required. Minimum columns: to, subject, text
-# optional: from, mode, html, metadata_json
-npm run send-tracked-batch -- --csv wave.csv --out wave-minted.csv --mint-only
-```
-
-`--mint-only` calls `POST /v1/messages` for each row and writes `message_id` + `pixel_url`. It does **not** speak SMTP or Gmail. Default `--delay-ms 1000` paces a 500-row prepare; a row-level mint error is logged (`status=error`) and the rest continue.
-
-Optional `--raw-dir ./wave-raw` writes `<message_id>.eml` (`raw_mime`) and a `raw_path` column — useful if a later job will send the already-minted RFC822. Do not remint the same wave if you need those IDs to stay stable.
-
-**Mint + send in one pass** (your mailbox, still not Postal):
+**Prepare MAILMERGE-E1 (no send):**
 
 ```bash
-npm run send-tracked-batch -- --csv wave.csv --out wave-sent.csv --via smtp --delay-ms 1000
-# or: --via gmail_raw   (GMAIL_ACCESS_TOKEN, scope gmail.send)
+# Shared box path (not required for repo tests — tests use test/fixtures/mailmerge-e1.csv)
+npm run send-tracked-batch -- \
+  --csv /workspace/eslams-outbound-500/MAILMERGE-E1.csv \
+  --out /workspace/eslams-outbound-500/AMT-LOG-E1.csv \
+  --mint-only \
+  --touch E1 \
+  --campaign eslams-researcher-lowstakes-2026-09 \
+  --from makriman@berkeley.edu
 ```
 
-Output CSV keeps input columns and **appends**: `message_id`, `pixel_url`, `status` (`minted` | `sent` | `error`), `error`, `via`, `sent_at`. If mint succeeds and send fails, `message_id` is still written (`status=error`). Same env as `send-tracked`. Single-row CLI is unchanged (`npm run send-tracked`).
+| Flag | Value |
+| --- | --- |
+| `--mint-only` | mint `POST /v1/messages` only; no SMTP/Gmail |
+| `--touch` | `E1` \| `E2` \| `E3` |
+| `--campaign` | default `eslams-researcher-lowstakes-2026-09` |
+| `--from` / `AMT_FROM` | `makriman@berkeley.edu` |
+| `--delay-ms` | default `1000`; row errors fail-soft |
 
-Example input row:
+**Mailmerge columns** (map: `email`→`to`, `body_text`→`text` with `mode=plain_looking`, `subject`→`subject`):
 
 ```csv
-to,subject,text,from,mode,metadata_json
-ada@lab.edu,Quick question on your preprint,"Hi Ada — I read your paper. See https://example.com/collab",you@icloud.com,plain_looking,"{""wave"":""gtm-2026-09""}"
+send_batch_order,contact_id,first_name,email,subject,body_text
+1,c_ada,Ada,ada@lab.edu,Quick question on your preprint,"Hi Ada — I read your paper on low-stakes assessment. Would you have 20 minutes to compare notes?"
 ```
+
+Log CSV **keeps input columns** and appends: `campaign`, `touch`, `amt_message_id`, `sent_at`, `open_status`, `open_at`, `bounce_or_error`. At prepare, `sent_at` / `open_status` / `open_at` are empty; mint/send failures go in `bounce_or_error` ( `amt_message_id` is still written if mint succeeded).
+
+Optional `--raw-dir ./wave-raw` writes `<message_id>.eml`. Do not remint the same wave if those IDs must stay stable. To mint **and** send later (your mailbox, still not Postal): drop `--mint-only` and pass `--via smtp` or `--via gmail_raw`. Single-row CLI is unchanged (`npm run send-tracked`).
 
 Programmatic: `runBatch` / `parseCsvRecords` in [`client/batch.ts`](../client/batch.ts). Never `htmlBody`. Never commit SMTP passwords or OAuth tokens.
