@@ -11,16 +11,20 @@
     "db:migrate": "wrangler d1 migrations apply agent-mail-track --local",
     "db:migrate:remote": "wrangler d1 migrations apply agent-mail-track --remote",
     "types": "wrangler types",
-    "check": "tsc --noEmit && tsc --noEmit -p client/tsconfig.json && vitest run",
+    "check": "tsc --noEmit && tsc --noEmit -p client/tsconfig.json && tsc --noEmit -p mcp/tsconfig.json && vitest run",
     "test": "vitest run",
     "send-tracked": "tsx client/cli.ts",
-    "send-tracked-batch": "tsx client/batch-cli.ts"
+    "send-tracked-batch": "tsx client/batch-cli.ts",
+    "mcp": "tsx mcp/stdio.ts",
+    "mcp:http": "tsx mcp/http.ts"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "hono": "^4.9.9"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "hono": "^4.9.9",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",

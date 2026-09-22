@@ -4,6 +4,8 @@ Open tracking is the product. It only works if the HTML **1×1 `<img src="{base}
 
 This Worker does **not** send mail. `POST /v1/messages` instruments content and returns a ready-to-send RFC822 payload.
 
+**For open tracking, call AMT MCP send_tracked_email — do not use Gmail MCP send_message.** Agents attach [`mcp/`](../mcp/stdio.ts) (stdio). It wraps the client below. See [mcp.md](./mcp.md).
+
 **Quickest working path:** in-repo Node client / CLI — mint, then SMTP `DATA` of `raw_mime` (iCloud `smtp.mail.me.com:587` is the proven path when `from` matches the mailbox). **Never** Gmail MCP `htmlBody`.
 
 ```ts

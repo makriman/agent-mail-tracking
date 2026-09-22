@@ -80,5 +80,5 @@ If `webhook_url` was set at create time, the Worker fire-and-forgets a POST on t
 
 - Open tracking is a standard 1×1 `<img>` whose `src` is `GET /o/:token`. That endpoint always returns a 1×1 GIF (`image/gif`) with `Cache-Control: no-store`. Invalid tokens still return the GIF so clients do not show a broken image.
 - CSS / `background-image` / font-loading “pixels” are unreliable in Gmail and other clients. This Worker does not emit them.
-- The `<img>` must be present in the **sent** MIME. Gmail connector `htmlBody` strips images; send `raw_mime` / `raw_base64url` instead ([agent-send.md](./agent-send.md)).
+- The `<img>` must be present in the **sent** MIME. Gmail connector `htmlBody` strips images; send `raw_mime` / `raw_base64url` instead ([agent-send.md](./agent-send.md)). **For open tracking, call AMT MCP send_tracked_email — do not use Gmail MCP send_message** ([mcp.md](./mcp.md)).
 - `GET /c/:token` 302s to the stored original URL only if it is `http:` or `https:`. Other schemes are rejected (`invalid_destination`). Protocol-relative and relative URLs are refused at both instrument and redirect time. Click rewriting is secondary to open tracking.

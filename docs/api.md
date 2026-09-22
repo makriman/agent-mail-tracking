@@ -9,7 +9,7 @@ Auth for `/v1/*` and the dashboard (`GET /`, `GET /m/:id`):
 
 `GET /health`, `GET /o/:token`, and `GET /c/:token` are unauthenticated.
 
-This service **does not send email**. Agents POST content, receive instrumented content + `message_id`, and send via their own Gmail/SMTP/etc. In-repo reference: [`client/`](../client/index.ts) and `npm run send-tracked` (SMTP or Gmail raw — **not** `htmlBody`).
+This service **does not send email**. Agents POST content, receive instrumented content + `message_id`, and send via their own Gmail/SMTP/etc. In-repo reference: [`client/`](../client/index.ts) and `npm run send-tracked` (SMTP or Gmail raw — **not** `htmlBody`). Attached agents use the [MCP](./mcp.md): **For open tracking, call AMT MCP send_tracked_email — do not use Gmail MCP send_message.**
 
 **Open tracking requires the HTML `<img>` to survive send.** `POST /v1/messages` returns `raw_mime` and `raw_base64url` for that. Gmail MCP / connector `htmlBody` **strips `<img>` tags** — do not use it for tracked mail. See [agent-send.md](./agent-send.md).
 
