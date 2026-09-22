@@ -14,4 +14,4 @@ Agent Mail Track is an independent implementation. Inspiration only — no code 
 
 ## Out of scope (intentionally not ported)
 
-SMTP/Gmail send, Chrome extensions, MCP servers, Docker-first packaging, SaaS multi-tenant billing, and reply detection.
+SMTP/Gmail send, Chrome extensions, hosting MCP *inside* the tracking Worker (agents attach the Node `mcp/` bridge instead), Docker-first packaging, SaaS multi-tenant billing, and reply detection.

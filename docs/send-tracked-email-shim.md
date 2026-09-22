@@ -71,10 +71,11 @@ When `track` is on (default):
 2. `via: "smtp"` → `sendRawMimeSmtp` (`raw_mime` as DATA), or `via: "gmail_raw"` → `sendRawGmail` (`raw_base64url`).
 3. **Never** `htmlBody` / `textBody`. Those paths throw.
 
-CLI: `npm run send-tracked -- --to …` (env `AMT_API_KEY`, `AMT_BASE_URL`, `SMTP_*` or `GMAIL_ACCESS_TOKEN`). eSlams Researcher GTM prepare: `npm run send-tracked-batch -- --csv /workspace/eslams-outbound-500/MAILMERGE-E1.csv --out AMT-LOG-E1.csv --mint-only --touch E1 --from makriman@berkeley.edu`. Quickest working path is **client + SMTP**. See [agent-send.md](./agent-send.md). AMT stays mint+track; it is not Postal ([compare-postal.md](./compare-postal.md)).
+CLI: `npm run send-tracked -- --to …` (env `AMT_API_KEY`, `AMT_BASE_URL`, `SMTP_*` or `GMAIL_ACCESS_TOKEN`). eSlams Researcher GTM prepare: `npm run send-tracked-batch -- --csv /workspace/eslams-outbound-500/MAILMERGE-E1.csv --out AMT-LOG-E1.csv --mint-only --touch E1 --from makriman@berkeley.edu`. Quickest working path is **client + SMTP**. Agents that cannot call the Node client should attach the [AMT MCP](./mcp.md): **For open tracking, call AMT MCP send_tracked_email — do not use Gmail MCP send_message.** See [agent-send.md](./agent-send.md). AMT stays mint+track; it is not Postal ([compare-postal.md](./compare-postal.md)).
 
 ## See also
 
+- [mcp.md](./mcp.md) — agent MCP bridge (mint + SMTP / Gmail raw; no connector htmlBody)
 - [agent-send.md](./agent-send.md) — mint fields, client/CLI, Gmail raw curl/Python, SMTP
 - [api.md](./api.md) — `POST /v1/messages` / `GET /v1/messages/:id`
 - [compare-postal.md](./compare-postal.md) — why AMT is not an MTA
