@@ -6,6 +6,8 @@
  */
 export { HTML_BODY_BANNED, AmtHtmlBodyError, assertNoHtmlBody } from "./guard";
 export { mintTrackedMessage, shapeMintRequest, trimBaseUrl } from "./mint";
+export { getTrackedMessage, shapeGetRequest } from "./get";
+export type { GetTrackedMessageOptions, TrackedMessageView } from "./get";
 export { sendRawMimeSmtp, envelopeAddress, smtpDataPayload } from "./smtp";
 export {
   sendRawGmail,

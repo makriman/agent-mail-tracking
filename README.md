@@ -8,6 +8,10 @@ Open-source, self-hostable. A Cloudflare Worker instruments content; opens and c
 
 **Office shim:** default-on `sendTrackedEmail` — mint, then send via that provider’s img-preserving path (Gmail raw, Outlook Graph MIME, SMTP DATA). Agents never mint by hand. Spec: [docs/send-tracked-email-shim.md](./docs/send-tracked-email-shim.md). Reference implementation: [`client/`](./client/index.ts) (`npm run send-tracked`).
 
+**For open tracking, call AMT MCP send_tracked_email — do not use Gmail MCP send_message.**
+
+Gmail and Outlook MCP compose (`send_message`, `htmlBody`, `textBody`) strip `<img>` pixels. The tracking Worker stays mint+track and does not send mail. Attach the in-repo Node MCP ([`mcp/`](./mcp/stdio.ts)), which wraps [`client/`](./client/index.ts): it mints here, then delivers `raw_mime` over SMTP or `raw_base64url` via Gmail API `{ raw }`. Mailbox secrets stay in the agent process (`AMT_API_KEY`, `SMTP_*`, `GMAIL_ACCESS_TOKEN`), not in git and not on the Worker. Tool reference: [docs/mcp.md](./docs/mcp.md).
+
 ## Quickest working path (agent send)
 
 Use the Node client: mint, then SMTP `DATA` of `raw_mime`. **Never** `htmlBody` (Gmail/Outlook connectors strip `<img>` and opens stay `no_signal`).
@@ -44,13 +48,51 @@ Log CSV keeps input columns and appends `campaign`, `touch`, `amt_message_id`, `
 
 > **Industry class: MCP / connector `htmlBody` strips the open pixel.** Compose helpers (Gmail MCP `send_message` / `create_draft`, Outlook MCP JSON body, similar tools) sanitize HTML and drop `<img>`. Inbox UNREAD can still clear; AMT stays `no_signal`. **Do not** send returned `html` through `htmlBody`. Use `raw_mime` / `raw_base64url`. Not Gmail-only — Outlook Graph send MIME is first-class next (same mint; not wired in this Worker). See [docs/agent-send.md](./docs/agent-send.md).
 
+## Attach the MCP
+
+From the repo root, with secrets only in the environment:
+
+```bash
+export AMT_API_KEY=…                              # Worker API_KEY
+export AMT_BASE_URL=https://track.greatindiancompany.com
+export SMTP_HOST=smtp.mail.me.com SMTP_PORT=587
+export SMTP_USER=you@icloud.com SMTP_PASS=…       # app password
+# or omit SMTP_* and set GMAIL_ACCESS_TOKEN (scope gmail.send)
+npm run mcp                                       # stdio
+```
+
+Cursor / Claude Desktop (`mcp.json`). `cwd` is this repo. `npx tsx` keeps stdout free for the protocol (`npm run` can print extra lines).
+
+```json
+{
+  "mcpServers": {
+    "agent-mail-track": {
+      "command": "npx",
+      "args": ["tsx", "mcp/stdio.ts"],
+      "env": {
+        "AMT_API_KEY": "…",
+        "AMT_BASE_URL": "https://track.greatindiancompany.com",
+        "SMTP_HOST": "smtp.mail.me.com",
+        "SMTP_PORT": "587",
+        "SMTP_USER": "you@icloud.com",
+        "SMTP_PASS": "…"
+      }
+    }
+  }
+}
+```
+
+Tools: `mint_tracked_message`, `send_tracked_email` (`from` required; `via` is `smtp` or `gmail_raw`), `get_tracked_message`, `mint_tracked_batch` (mint-only). `npm run mcp:http` listens on `127.0.0.1:3333` (`POST /mcp`). Set `AMT_MCP_HTTP_TOKEN` if you bind anything but localhost. Do not publish that port.
+
+SMTP stays in the Node client (`node:net`). That is why this MCP is not a route on the Hono Worker.
+
 Custom domain target: [`track.greatindiancompany.com`](https://track.greatindiancompany.com) (attach after deploy; not required to merge or to run on `*.workers.dev`).
 
 ## Non-goals (v0)
 
-- Worker sending mail — this Worker never talks SMTP/Gmail/Graph. A **reference Node client** (`client/`) mints then sends through *your* mailbox. AMT is mint+track, not an MTA ([Postal comparison](./docs/compare-postal.md)).
+- Worker sending mail — this Worker never talks SMTP/Gmail/Graph. A **reference Node client** (`client/`) and the **Node MCP** (`mcp/`) mint then send through *your* mailbox. AMT is mint+track, not an MTA ([Postal comparison](./docs/compare-postal.md)).
 - Chrome extension
-- MCP server
+- Hosting MCP inside the tracking Worker (agents attach `mcp/` instead; SMTP needs the Node client, and mailbox secrets stay off this Worker)
 - Docker-first path / running a mail server
 - SaaS multi-tenant billing
 - Reply detection (`replied` is a stub field)
@@ -75,6 +117,8 @@ Agent                         Worker                         Inbox
 2. Send the RFC822 on a path that **keeps `<img>`**: Gmail `{ "raw": raw_base64url }`, Outlook Graph send MIME, or SMTP `DATA` of `raw_mime`.
 3. **Do not** paste `html` into any connector `htmlBody` / JSON HTML body — images are stripped.
 4. Read `GET /v1/messages/:id` (`status`, `opens`, `clicks`, event timeline) and act.
+
+Attached agents use `send_tracked_email` for steps 1–2 and `get_tracked_message` for step 4. **For open tracking, call AMT MCP send_tracked_email — do not use Gmail MCP send_message.**
 
 ## Three modes (exactly these)
 
@@ -124,7 +168,7 @@ npm run deploy                    # wrangler deploy
 
 `wrangler.jsonc` ships with a placeholder `database_id`. Replace it with the UUID printed by `d1 create` before a remote deploy. Local `wrangler dev` works with the placeholder after `npm run db:migrate`.
 
-Scripts: `deploy`, `db:migrate`, `types`, `check` (`tsc` + tests), `test`, `send-tracked` (one mint + SMTP/Gmail raw), `send-tracked-batch` (eSlams mailmerge; `--mint-only --touch E1 --from …`; no secrets in git).
+Scripts: `deploy`, `db:migrate`, `types`, `check` (`tsc` + tests), `test`, `send-tracked` (one mint + SMTP/Gmail raw), `send-tracked-batch` (eSlams mailmerge; `--mint-only --touch E1 --from …`; no secrets in git), `mcp` (stdio), `mcp:http` (localhost Streamable HTTP).
 
 ### Custom domain (`track.greatindiancompany.com`)
 
@@ -177,6 +221,7 @@ npm run check
 npm run dev
 npm run send-tracked -- --help
 npm run send-tracked-batch -- --help
+npm run mcp          # stdio MCP; requires AMT_API_KEY in the environment
 ```
 
 ## License

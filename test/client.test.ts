@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HTML_BODY_BANNED, assertNoHtmlBody } from "../client/guard";
 import { shapeGmailRawSend, GMAIL_SEND_SCOPE, gmailSendUrl } from "../client/gmail";
+import { getTrackedMessage, shapeGetRequest } from "../client/get";
 import { mintTrackedMessage, shapeMintRequest, trimBaseUrl } from "../client/mint";
 import { AmtClientError } from "../client/types";
 
@@ -178,5 +179,53 @@ describe("gmail raw shaping", () => {
 describe("trimBaseUrl", () => {
   it("strips trailing slashes", () => {
     expect(trimBaseUrl("https://track.example///")).toBe("https://track.example");
+  });
+});
+
+describe("getTrackedMessage (mock fetch)", () => {
+  it("GETs /v1/messages/:id and returns opens and status", async () => {
+    const view = {
+      message_id: "msg_abc",
+      to: "ada@example.com",
+      subject: "Hello",
+      mode: "plain_looking",
+      open_tracking: true,
+      opens: 2,
+      clicks: 1,
+      status: "clicked",
+    };
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      expect(url).toBe("https://track.greatindiancompany.com/v1/messages/msg_abc");
+      expect(init?.method).toBe("GET");
+      expect(init?.headers).toEqual({ Authorization: "Bearer secret" });
+      return new Response(JSON.stringify(view), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const req = shapeGetRequest({
+      baseUrl: "https://track.greatindiancompany.com/",
+      apiKey: "secret",
+      messageId: "msg_abc",
+    });
+    expect(req.url).toBe("https://track.greatindiancompany.com/v1/messages/msg_abc");
+
+    const result = await getTrackedMessage({
+      baseUrl: "https://track.greatindiancompany.com/",
+      apiKey: "secret",
+      messageId: "msg_abc",
+    });
+    expect(result.opens).toBe(2);
+    expect(result.status).toBe("clicked");
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it("surfaces API errors without calling a live host", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: "not_found" }), { status: 404 })));
+    await expect(
+      getTrackedMessage({ baseUrl: "https://example.invalid", apiKey: "k", messageId: "msg_missing" }),
+    ).rejects.toBeInstanceOf(AmtClientError);
+    expect(() =>
+      shapeGetRequest({ baseUrl: "https://track.example", apiKey: "k", messageId: "../etc" }),
+    ).toThrow(/messageId/);
   });
 });
