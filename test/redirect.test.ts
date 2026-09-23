@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isSafeRedirectUrl, shouldRewriteLink } from "../src/redirect";
+import { canonicalRedirectHref, isSafeRedirectUrl, shouldRewriteLink } from "../src/redirect";
 
 describe("isSafeRedirectUrl", () => {
   it("allows http and https destinations", () => {
@@ -19,6 +19,15 @@ describe("isSafeRedirectUrl", () => {
     expect(isSafeRedirectUrl("")).toBe(false);
     expect(isSafeRedirectUrl("   ")).toBe(false);
     expect(isSafeRedirectUrl("not a url")).toBe(false);
+    expect(isSafeRedirectUrl("https://user:pass@example.com/phish")).toBe(false);
+    expect(isSafeRedirectUrl("https://example.com/\r\nLocation: https://evil.example")).toBe(false);
+    expect(isSafeRedirectUrl("https://example.com/\nfoo")).toBe(false);
+  });
+
+  it("normalizes backslash URLs onto the parsed host", () => {
+    expect(canonicalRedirectHref("https://example.com\\@evil.com")).toBe("https://example.com/@evil.com");
+    expect(canonicalRedirectHref("https://example.com/docs")).toBe("https://example.com/docs");
+    expect(canonicalRedirectHref("javascript:alert(1)")).toBeNull();
   });
 });
 

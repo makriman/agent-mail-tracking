@@ -1,18 +1,33 @@
+/** ASCII control chars. URL parsers strip some of these and glue the host together. */
+const CONTROL_CHARS = /[\u0000-\u001F\u007F]/;
+
 /**
  * Open-redirect safety: only http(s) destinations are allowed.
- * Rejects javascript:, data:, mailto:, tel:, file:, protocol-relative, and junk.
+ * Rejects javascript:, data:, mailto:, tel:, file:, protocol-relative, userinfo,
+ * and control characters. Backslash is allowed here because WHATWG turns `\` into `/`;
+ * callers that redirect must use {@link canonicalRedirectHref}, not the raw string.
  */
 export function isSafeRedirectUrl(url: string): boolean {
-  if (typeof url !== "string") return false;
+  return canonicalRedirectHref(url) !== null;
+}
+
+/**
+ * Normalized href for a click Location, or null when the URL is not a safe http(s) target.
+ * Drops userinfo and uses the parsed href so a raw `\` or odd encoding cannot pick a different host.
+ */
+export function canonicalRedirectHref(url: string): string | null {
+  if (typeof url !== "string") return null;
   const trimmed = url.trim();
-  if (!trimmed) return false;
-  // Protocol-relative URLs parse only with a base; refuse them outright.
-  if (trimmed.startsWith("//")) return false;
+  if (!trimmed || trimmed.startsWith("//")) return null;
+  if (CONTROL_CHARS.test(trimmed)) return null;
   try {
     const parsed = new URL(trimmed);
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+    if (parsed.username || parsed.password) return null;
+    if (!parsed.hostname) return null;
+    return parsed.href;
   } catch {
-    return false;
+    return null;
   }
 }
 

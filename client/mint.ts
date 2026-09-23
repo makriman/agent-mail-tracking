@@ -1,4 +1,4 @@
-import { assertNoHtmlBody } from "./guard";
+import { assertNoHtmlBody, assertSendableRawMime } from "./guard";
 import { AmtClientError, type MintedMessage, type MintTrackedMessageOptions } from "./types";
 
 export function trimBaseUrl(baseUrl: string): string {
@@ -66,8 +66,10 @@ export async function mintTrackedMessage(opts: MintTrackedMessageOptions): Promi
   }
 
   const minted = parsed as MintedMessage;
-  if (!minted?.raw_mime || !minted.raw_base64url) {
-    throw new AmtClientError("mint failed: response missing raw_mime / raw_base64url", {
+  try {
+    assertSendableRawMime(minted);
+  } catch (err) {
+    throw new AmtClientError(err instanceof Error ? err.message : "mint failed: raw mime rejected", {
       status: res.status,
       body: parsed,
     });

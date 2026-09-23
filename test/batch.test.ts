@@ -33,7 +33,10 @@ afterEach(() => {
 });
 
 function mintedFixture(over: Partial<MintedMessage> = {}): MintedMessage {
-  return {
+  const raw_mime =
+    over.raw_mime ??
+    'MIME-Version: 1.0\r\nFrom: makriman@berkeley.edu\r\n<img src="https://track.example/o/tok">';
+  const base: MintedMessage = {
     message_id: "msg_ada",
     mode: "plain_looking",
     open_tracking: true,
@@ -45,13 +48,18 @@ function mintedFixture(over: Partial<MintedMessage> = {}): MintedMessage {
     subject: "Hello",
     text: "Hi",
     html: '<p>Hi</p>\n<img src="https://track.example/o/tok" width="1" height="1" alt="">',
-    raw_mime: 'MIME-Version: 1.0\r\nFrom: makriman@berkeley.edu\r\n<img src="https://track.example/o/tok">',
-    raw_base64url: "TUlNRS1WZXJzaW9uOiAxLjA",
+    raw_mime,
+    raw_base64url: Buffer.from(raw_mime, "utf8").toString("base64url"),
     pixel_url: "https://track.example/o/tok",
     base_url: "https://track.greatindiancompany.com",
     links: [],
     created_at: "2026-09-21T00:00:00.000Z",
+  };
+  return {
+    ...base,
     ...over,
+    raw_mime,
+    raw_base64url: over.raw_base64url ?? base.raw_base64url,
   };
 }
 
