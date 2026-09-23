@@ -51,3 +51,5 @@ Further controls that do not need a code change:
 - Open and click tokens compare with `safeEqual` and reject input longer than 512 characters.
 - SMTP `MAIL FROM` / `RCPT TO` reject CR/LF before parsing and accept a single addr-spec. `EHLO` strips controls and whitespace.
 - The dashboard message list uses the same human-open query as `GET /v1/messages`, so a later proxy hit cannot leave the HTML list on `proxy_open` while JSON stays `high_confidence_open`.
+
+Index of residuals, including this TCP pin: [SECURITY-RESIDUALS-2026-09-23.md](./SECURITY-RESIDUALS-2026-09-23.md).

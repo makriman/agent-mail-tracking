@@ -13,6 +13,9 @@ import {
   listHumanOpenIds,
   listLinks,
   listMessages,
+  mintRetryAfterSeconds,
+  mintWindowUsage,
+  mintWriteAllowed,
   recordEvent,
   serializeMessage,
 } from "./db";
@@ -214,6 +217,13 @@ app.post("/v1/messages", async (c) => {
 
   const mode: Mode = body.mode ?? "plain_looking";
   const now = new Date().toISOString();
+  const usage = await mintWindowUsage(c.env.DB, now);
+  if (!mintWriteAllowed(usage.inWindow)) {
+    return c.json({ error: "rate_limited" }, 429, {
+      "Retry-After": String(mintRetryAfterSeconds(now, usage.oldest)),
+    });
+  }
+
   const messageId = newId("msg");
   const baseUrl = trimSlash(body.base_url || new URL(c.req.url).origin);
   const urls = collectUrls(mode, body.text, body.html);

@@ -47,3 +47,5 @@ Nothing new to set. Unset means the cap above.
 - Rotating `TOKEN_SECRET` invalidates outstanding open and click tokens. It also invalidates legitimate pixels still in flight, and it does not delete rows already stored.
 - v0 has no purge job. Watch D1 size.
 - A zone rule in front of `/o/` and `/c/` can bound total requests before they reach the Worker. This repo does not ship that rule. A per-IP ceiling there matches the app cap and leaves the many-IP residual. A total ceiling bounds the residual and can drop a later reader's first event once it is spent — the same tradeoff as a global row cap.
+
+Mint writes are a separate cap on `POST /v1/messages`. Index: [SECURITY-RESIDUALS-2026-09-23.md](./SECURITY-RESIDUALS-2026-09-23.md).
