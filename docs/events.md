@@ -30,6 +30,8 @@ Reply detection is a **future stub**. Every API payload includes `"replied": fal
 
 Deduped events stay on the timeline (marked) but do not increment `open_count` / `click_count` and do not re-fire webhooks.
 
+Open and click URLs are unauthenticated, so each message may insert at most **60** `open` rows and **60** `click` rows per rolling hour, and at most **240** of each type over the life of the message (including deduped rows). Past either cap the pixel GIF and the click redirect still succeed, and no further `events` row is written. No schema migration is required; the cap is a count of existing rows.
+
 ## Classification (best-effort)
 
 Email clients prefetch and proxy images. Treat labels as hints.
@@ -60,7 +62,7 @@ replied (future stub)
 
 ## Webhooks
 
-If `webhook_url` was set at create time, the Worker fire-and-forgets a POST on the **first** non-deduped open and the **first** non-deduped click. Failures are swallowed. Timeout is 5 seconds.
+If `webhook_url` was set at create time, the Worker fire-and-forgets a POST on the **first** non-deduped open and the **first** non-deduped click. Failures are swallowed. Timeout is 5 seconds. The URL must be public `https`, or `http` to `localhost` / `127.0.0.1` for local dev. Private, link-local, metadata, and IPv6 literal hosts are rejected. Before the POST, a public hostname is resolved with DNS-over-HTTPS and the call is skipped when any address is non-public. Redirects are not followed. A name that flips from a public address to a private one after that lookup is still a residual window.
 
 ```json
 {
@@ -74,7 +76,7 @@ If `webhook_url` was set at create time, the Worker fire-and-forgets a POST on t
 }
 ```
 
-`type` is `first_open` or `first_click`. HTTPS required (http://localhost is allowed for local tests).
+`type` is `first_open` or `first_click`. Public https is required (`http://localhost` and `http://127.0.0.1` are allowed for local tests).
 
 ## Pixel and redirect
 

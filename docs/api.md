@@ -46,7 +46,7 @@ Create a tracked message and receive instrumented bodies.
 | `html` | yes in `html` mode | Existing HTML to instrument |
 | `mode` | no | `plain_looking` (default) \| `plain_only` \| `html` |
 | `metadata` | no | JSON object, max ~8 KiB |
-| `webhook_url` | no | HTTPS (or `http://localhost`) — first open / first click |
+| `webhook_url` | no | Public `https`, or `http://localhost` / `http://127.0.0.1` for local dev. Private, link-local, metadata, and IPv6 literals are rejected. First open / first click only. |
 | `base_url` | no | Origin for absolute pixel/click URLs. Defaults to this request's origin. **Persisted** so later GETs keep this host. |
 
 ### Modes

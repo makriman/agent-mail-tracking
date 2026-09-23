@@ -30,7 +30,7 @@ import { isSafeRedirectUrl } from "./redirect";
 import { hashIp, signToken, verifyToken } from "./tokens";
 import type { CreateMessageBody, Mode } from "./types";
 import { MODES } from "./types";
-import { fireWebhook, webhookPayload } from "./webhook";
+import { canonicalWebhookUrl, fireWebhook, webhookPayload } from "./webhook";
 
 type AppEnv = { Bindings: Env };
 
@@ -209,7 +209,7 @@ app.post("/v1/messages", async (c) => {
     mode,
     open_tracking: result.open_tracking,
     metadata: body.metadata ? JSON.stringify(body.metadata) : null,
-    webhook_url: body.webhook_url?.trim() || null,
+    webhook_url: body.webhook_url ? canonicalWebhookUrl(body.webhook_url) : null,
     base_url: baseUrl,
   });
   await insertLinks(
@@ -363,7 +363,7 @@ function validateCreate(body: CreateMessageBody): string | null {
   }
 
   if (body.webhook_url != null) {
-    if (typeof body.webhook_url !== "string" || !isAllowedWebhook(body.webhook_url)) {
+    if (typeof body.webhook_url !== "string" || !canonicalWebhookUrl(body.webhook_url)) {
       return "invalid_webhook_url";
     }
   }
@@ -375,15 +375,3 @@ function validateCreate(body: CreateMessageBody): string | null {
   return null;
 }
 
-function isAllowedWebhook(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === "https:") return true;
-    if (parsed.protocol === "http:" && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1")) {
-      return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}

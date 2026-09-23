@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HTML_BODY_BANNED, assertNoHtmlBody } from "../client/guard";
+import { HTML_BODY_BANNED, assertNoHtmlBody, assertSendableRawMime, mimeHasOpenPixel } from "../client/guard";
 import { shapeGmailRawSend, GMAIL_SEND_SCOPE, gmailSendUrl } from "../client/gmail";
 import { mintTrackedMessage, shapeMintRequest, trimBaseUrl } from "../client/mint";
 import { AmtClientError } from "../client/types";
@@ -80,7 +80,15 @@ describe("shapeMintRequest", () => {
   });
 });
 
+function toBase64Url(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let bin = "";
+  for (const byte of bytes) bin += String.fromCharCode(byte);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
 describe("mintTrackedMessage (mock fetch)", () => {
+  const rawMime = 'MIME-Version: 1.0\r\nFrom: you@icloud.com\r\n<img src="https://track.example/o/tok">';
   const minted = {
     message_id: "msg_test",
     mode: "plain_looking",
@@ -93,8 +101,8 @@ describe("mintTrackedMessage (mock fetch)", () => {
     subject: "Hello",
     text: "Hi",
     html: '<p>Hi</p>\n<img src="https://track.example/o/tok" width="1" height="1" alt="">',
-    raw_mime: "MIME-Version: 1.0\r\nFrom: you@icloud.com\r\n<img src=\"https://track.example/o/tok\">",
-    raw_base64url: "TUlNRS1WZXJzaW9uOiAxLjA",
+    raw_mime: rawMime,
+    raw_base64url: toBase64Url(rawMime),
     pixel_url: "https://track.example/o/tok",
     base_url: "https://track.greatindiancompany.com",
     links: [],
@@ -153,6 +161,57 @@ describe("mintTrackedMessage (mock fetch)", () => {
     ).rejects.toBeInstanceOf(AmtClientError);
 
     expect(fetchMock).toHaveBeenCalledWith("https://example.invalid/v1/messages", expect.anything());
+  });
+});
+
+describe("raw mime pixel guard", () => {
+  const rawMime = 'MIME-Version: 1.0\r\n<img src="https://track.example/o/tok" width="1" height="1" alt="">';
+
+  it("accepts matching raw_mime and raw_base64url that still contain the pixel", () => {
+    expect(mimeHasOpenPixel('line=\r\n<img src="https://track.example/o/tok">')).toBe(true);
+    expect(() =>
+      assertSendableRawMime({
+        mode: "plain_looking",
+        raw_mime: rawMime,
+        raw_base64url: toBase64Url(rawMime),
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses a Gmail raw payload that dropped the img or diverged from raw_mime", () => {
+    const stripped = "MIME-Version: 1.0\r\n\r\nHello";
+    expect(() =>
+      assertSendableRawMime({
+        mode: "plain_looking",
+        raw_mime: stripped,
+        raw_base64url: toBase64Url(stripped),
+      }),
+    ).toThrow(/missing the open-tracking/);
+    expect(() =>
+      assertSendableRawMime({
+        mode: "html",
+        raw_mime: rawMime,
+        raw_base64url: toBase64Url(stripped),
+      }),
+    ).toThrow(/does not match raw_mime/);
+    expect(() =>
+      assertSendableRawMime({
+        mode: "plain_looking",
+        raw_mime: rawMime,
+        raw_base64url: "!!!!",
+      }),
+    ).toThrow(/not valid base64url/);
+  });
+
+  it("allows plain_only without an img when the two raw fields match", () => {
+    const plain = "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHi";
+    expect(() =>
+      assertSendableRawMime({
+        mode: "plain_only",
+        raw_mime: plain,
+        raw_base64url: toBase64Url(plain),
+      }),
+    ).not.toThrow();
   });
 });
 

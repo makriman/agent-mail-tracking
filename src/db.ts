@@ -3,6 +3,19 @@ import type { Classification, EventRow, EventType, LinkRow, MessageRow, Mode } f
 
 const DEDUPE_MS = 60 * 60 * 1000;
 
+/**
+ * Unauthenticated open/click URLs insert into D1. Cap rows so a leaked pixel or
+ * click link cannot fill the database. Deduped timeline rows are still stored
+ * until the cap; past it the GIF and redirect still succeed and the insert is skipped.
+ */
+export const EVENT_WRITES_PER_HOUR = 60;
+export const EVENT_WRITES_LIFETIME = 240;
+
+export function eventWriteAllowed(inWindow: number, total: number): boolean {
+  if (!Number.isFinite(inWindow) || !Number.isFinite(total)) return false;
+  return inWindow < EVENT_WRITES_PER_HOUR && total < EVENT_WRITES_LIFETIME;
+}
+
 export async function insertMessage(
   db: D1Database,
   row: {
@@ -113,6 +126,8 @@ export interface RecordEventInput {
 export interface RecordEventResult {
   first: boolean;
   deduped: boolean;
+  /** True when the hourly or lifetime cap skipped the insert. */
+  rateLimited: boolean;
   message: MessageRow;
 }
 
@@ -120,10 +135,25 @@ export async function recordEvent(db: D1Database, input: RecordEventInput): Prom
   const message = await getMessage(db, input.message_id);
   if (!message) return null;
   if (input.type === "open" && !message.open_tracking) {
-    return { first: false, deduped: true, message };
+    return { first: false, deduped: true, rateLimited: false, message };
   }
 
   const windowStart = new Date(Date.parse(input.created_at) - DEDUPE_MS).toISOString();
+  const usage = await db
+    .prepare(
+      `SELECT COUNT(*) AS total,
+              COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0) AS in_window
+       FROM events
+       WHERE message_id = ? AND type = ?`,
+    )
+    .bind(windowStart, input.message_id, input.type)
+    .first<{ total: number | string | null; in_window: number | string | null }>();
+  const total = Number(usage?.total ?? 0);
+  const inWindow = Number(usage?.in_window ?? 0);
+  if (!eventWriteAllowed(inWindow, total)) {
+    return { first: false, deduped: true, rateLimited: true, message };
+  }
+
   const prior = await db
     .prepare(
       `SELECT id FROM events
@@ -187,7 +217,7 @@ export async function recordEvent(db: D1Database, input: RecordEventInput): Prom
   }
 
   const updated = (await getMessage(db, input.message_id)) ?? message;
-  return { first, deduped, message: updated };
+  return { first, deduped, rateLimited: false, message: updated };
 }
 
 export function serializeMessage(

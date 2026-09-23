@@ -32,7 +32,15 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+function toBase64Url(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  let bin = "";
+  for (const byte of bytes) bin += String.fromCharCode(byte);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
 function mintedFixture(over: Partial<MintedMessage> = {}): MintedMessage {
+  const rawMime = 'MIME-Version: 1.0\r\nFrom: makriman@berkeley.edu\r\n<img src="https://track.example/o/tok">';
   return {
     message_id: "msg_ada",
     mode: "plain_looking",
@@ -45,8 +53,8 @@ function mintedFixture(over: Partial<MintedMessage> = {}): MintedMessage {
     subject: "Hello",
     text: "Hi",
     html: '<p>Hi</p>\n<img src="https://track.example/o/tok" width="1" height="1" alt="">',
-    raw_mime: 'MIME-Version: 1.0\r\nFrom: makriman@berkeley.edu\r\n<img src="https://track.example/o/tok">',
-    raw_base64url: "TUlNRS1WZXJzaW9uOiAxLjA",
+    raw_mime: rawMime,
+    raw_base64url: toBase64Url(rawMime),
     pixel_url: "https://track.example/o/tok",
     base_url: "https://track.greatindiancompany.com",
     links: [],
@@ -335,6 +343,38 @@ describe("mint-only dry run (mocked fetch) — eSlams mailmerge", () => {
     expect(result.records[0]?.bounce_or_error).toBe("");
     expect(result.records[0]?.amt_message_id).toBe("msg_ada");
     expect(result.summary.sent).toBe(1);
+  });
+
+  it("does not SMTP a mint whose raw_base64url dropped the open pixel", async () => {
+    const stripped = "MIME-Version: 1.0\r\n\r\nHello";
+    const sendSmtp = vi.fn(async () => ({ accepted: true as const, code: 250, response: "ok" }));
+    const result = await runBatch({
+      records: [{ email: "ada@lab.edu", subject: "Hi", body_text: "Hello" }],
+      headers: ["email", "subject", "body_text"],
+      mintOnly: false,
+      via: "smtp",
+      delayMs: 0,
+      defaultFrom: "makriman@berkeley.edu",
+      touch: "E1",
+      baseUrl: "https://track.example",
+      apiKey: "k",
+      smtp: { host: "smtp.example", port: 587, user: "u", pass: "p" },
+      deps: {
+        mint: async () =>
+          mintedFixture({
+            raw_mime: stripped,
+            raw_base64url: toBase64Url(stripped),
+          }),
+        sendSmtp,
+        sendGmail: async () => {
+          throw new Error("gmail must not run");
+        },
+      },
+    });
+    expect(sendSmtp).not.toHaveBeenCalled();
+    expect(result.summary.sent).toBe(0);
+    expect(result.records[0]?.amt_message_id).toBe("msg_ada");
+    expect(result.records[0]?.bounce_or_error).toMatch(/missing the open-tracking/);
   });
 
   it("records optional raw_path when writeRaw is provided (mint-only)", async () => {
