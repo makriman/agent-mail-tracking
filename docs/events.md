@@ -30,7 +30,7 @@ Reply detection is a **future stub**. Every API payload includes `"replied": fal
 
 Deduped events stay on the timeline (marked) but do not increment `open_count` / `click_count` and do not re-fire webhooks.
 
-Open and click URLs are unauthenticated. Each IP may insert at most **8** rows per rolling hour for one token (the open token is the message; a click token is that link). The first hit from an IP on that token is always stored, and a different IP is a different bucket, so one client cannot use up another reader's first open or first click. If `first_open_at` or `first_click_at` is still empty, that signal is written even when the bucket is already full. Further hits from the capped IP still return the GIF or the redirect and do not insert. No schema migration. A botnet that rotates source IPs can still write up to 8 rows per IP per hour; that residual is not a single-URL fill.
+Open and click URLs are unauthenticated. Each IP may insert at most **8** rows per rolling hour for one token (the open token is the message; a click token is that link). The first hit from an IP on that token is always stored, and a different IP is a different bucket, so one client cannot use up another reader's first open or first click. If `first_open_at` or `first_click_at` is still empty, that signal is written even when the bucket is already full. Further hits from the capped IP still return the GIF or the redirect and do not insert. No schema migration. Many source IPs can still insert 8 rows each per hour for that token and fill D1. See [SECURITY-D1.md](./SECURITY-D1.md).
 
 ## Classification (best-effort)
 

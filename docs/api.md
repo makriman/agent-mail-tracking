@@ -151,11 +151,11 @@ Same object plus `links[]`, `events[]` timeline (`ip_hash`, `classification`, `d
 
 ## `GET /o/:token`
 
-Record an open. Returns a 1×1 GIF. Invalid tokens still return the GIF.
+Record an open. Returns a 1×1 GIF. Invalid tokens still return the GIF. Each IP may insert at most 8 rows per rolling hour for this message. A different IP is a different bucket. Many IPs can still grow D1. See [SECURITY-D1.md](./SECURITY-D1.md).
 
 ## `GET /c/:token`
 
-Record a click and `302` to the stored original URL (`http`/`https` only). `404` if the token is unknown; `400` if the destination is unsafe.
+Record a click and `302` to the stored original URL (`http`/`https` only). `404` if the token is unknown; `400` if the destination is unsafe. The same 8-per-hour cap applies per IP and per link. See [SECURITY-D1.md](./SECURITY-D1.md).
 
 ## Dashboard
 
