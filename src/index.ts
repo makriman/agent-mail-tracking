@@ -25,12 +25,12 @@ import {
   trimSlash,
 } from "./instrument";
 import { buildRawMime } from "./mime";
-import { PIXEL_HEADERS, pixelGifBytes } from "./pixel";
-import { isSafeRedirectUrl } from "./redirect";
+import { NO_STORE_HEADERS, PIXEL_HEADERS, pixelGifBytes } from "./pixel";
+import { canonicalRedirectHref, isSafeRedirectUrl } from "./redirect";
 import { hashIp, signToken, verifyToken } from "./tokens";
 import type { CreateMessageBody, Mode } from "./types";
 import { MODES } from "./types";
-import { fireWebhook, webhookPayload } from "./webhook";
+import { canonicalWebhookUrl, fireWebhook, webhookPayload } from "./webhook";
 
 type AppEnv = { Bindings: Env };
 
@@ -39,6 +39,12 @@ const app = new Hono<AppEnv>();
 const MAX_BODY = 256 * 1024;
 const MAX_METADATA = 8 * 1024;
 const MAX_LIST = 100;
+
+app.use("/v1/*", async (c, next) => {
+  await next();
+  c.header("Cache-Control", "private, no-store");
+  c.header("CDN-Cache-Control", "no-store");
+});
 
 app.get("/health", (c) => c.json({ ok: true, service: "agent-mail-track", version: "0" }));
 
@@ -59,8 +65,7 @@ app.get("/o/:token", async (c) => {
   const now = new Date().toISOString();
   const ua = (c.req.header("User-Agent") ?? "").slice(0, 512);
   const classification = classifyOpen(ua);
-  const ip = c.req.header("CF-Connecting-IP") ?? c.req.header("X-Forwarded-For")?.split(",")[0]?.trim();
-  const ipHash = await hashIp(ip, secret);
+  const ipHash = await hashIp(clientIp(c), secret);
   const country = c.req.header("CF-IPCountry") ?? null;
 
   try {
@@ -100,15 +105,15 @@ app.get("/c/:token", async (c) => {
   if (!linkId) return c.json({ error: "not_found" }, 404);
 
   const link = await getLink(c.env.DB, linkId);
-  if (!link || !isSafeRedirectUrl(link.original_url)) {
+  const dest = link ? canonicalRedirectHref(link.original_url) : null;
+  if (!link || !dest) {
     return c.json({ error: "invalid_destination" }, 400);
   }
 
   const now = new Date().toISOString();
   const ua = (c.req.header("User-Agent") ?? "").slice(0, 512);
   const classification = classifyOpen(ua);
-  const ip = c.req.header("CF-Connecting-IP") ?? c.req.header("X-Forwarded-For")?.split(",")[0]?.trim();
-  const ipHash = await hashIp(ip, secret);
+  const ipHash = await hashIp(clientIp(c), secret);
   const country = c.req.header("CF-IPCountry") ?? null;
 
   try {
@@ -137,7 +142,14 @@ app.get("/c/:token", async (c) => {
     // Redirect anyway; telemetry failure must not strand the reader.
   }
 
-  return c.redirect(link.original_url, 302);
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: dest,
+      ...NO_STORE_HEADERS,
+      "Referrer-Policy": "no-referrer",
+    },
+  });
 });
 
 app.use("/v1/*", requireApiKey);
@@ -209,7 +221,7 @@ app.post("/v1/messages", async (c) => {
     mode,
     open_tracking: result.open_tracking,
     metadata: body.metadata ? JSON.stringify(body.metadata) : null,
-    webhook_url: body.webhook_url?.trim() || null,
+    webhook_url: body.webhook_url ? canonicalWebhookUrl(body.webhook_url) : null,
     base_url: baseUrl,
   });
   await insertLinks(
@@ -363,7 +375,7 @@ function validateCreate(body: CreateMessageBody): string | null {
   }
 
   if (body.webhook_url != null) {
-    if (typeof body.webhook_url !== "string" || !isAllowedWebhook(body.webhook_url)) {
+    if (typeof body.webhook_url !== "string" || !canonicalWebhookUrl(body.webhook_url)) {
       return "invalid_webhook_url";
     }
   }
@@ -375,15 +387,8 @@ function validateCreate(body: CreateMessageBody): string | null {
   return null;
 }
 
-function isAllowedWebhook(url: string): boolean {
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol === "https:") return true;
-    if (parsed.protocol === "http:" && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1")) {
-      return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
+/** Cloudflare sets CF-Connecting-IP. Do not trust X-Forwarded-For (clients can spoof it and evade the per-IP cap). */
+function clientIp(c: { req: { header: (name: string) => string | undefined } }): string | null {
+  return c.req.header("CF-Connecting-IP") ?? null;
 }
+

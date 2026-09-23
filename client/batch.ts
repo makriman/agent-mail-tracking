@@ -7,7 +7,7 @@
  * Map: email→to, body_text→text (plain_looking), subject→subject. Do not invent links.
  * htmlBody is banned. CLI: client/batch-cli.ts. Never commit mailbox secrets.
  */
-import { HTML_BODY_BANNED, assertNoHtmlBody } from "./guard";
+import { HTML_BODY_BANNED, assertNoHtmlBody, assertSendableRawMime } from "./guard";
 import { mintTrackedMessage } from "./mint";
 import {
   AmtClientError,
@@ -379,6 +379,8 @@ async function processRow(
     if (opts.mintOnly) {
       return { ...out, _status: "minted" };
     }
+
+    assertSendableRawMime(minted);
 
     if (opts.via === "smtp") {
       if (!opts.smtp) throw new AmtClientError("smtp config required (host, port, user, pass)");

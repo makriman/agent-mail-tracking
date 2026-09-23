@@ -3,6 +3,18 @@ import type { Classification, EventRow, EventType, LinkRow, MessageRow, Mode } f
 
 const DEDUPE_MS = 60 * 60 * 1000;
 
+/**
+ * Same IP hammering one open or click token must not fill D1.
+ * The first hit from that IP on that token in the hour is always stored (first-open / timeline).
+ * A different IP is a different bucket, so spam cannot consume someone else's first event.
+ */
+export const EVENT_WRITES_PER_IP_TOKEN_PER_HOUR = 8;
+
+export function eventWriteAllowed(inWindow: number): boolean {
+  if (!Number.isFinite(inWindow)) return false;
+  return inWindow < EVENT_WRITES_PER_IP_TOKEN_PER_HOUR;
+}
+
 export async function insertMessage(
   db: D1Database,
   row: {
@@ -113,6 +125,8 @@ export interface RecordEventInput {
 export interface RecordEventResult {
   first: boolean;
   deduped: boolean;
+  /** True when the hourly or lifetime cap skipped the insert. */
+  rateLimited: boolean;
   message: MessageRow;
 }
 
@@ -120,10 +134,26 @@ export async function recordEvent(db: D1Database, input: RecordEventInput): Prom
   const message = await getMessage(db, input.message_id);
   if (!message) return null;
   if (input.type === "open" && !message.open_tracking) {
-    return { first: false, deduped: true, message };
+    return { first: false, deduped: true, rateLimited: false, message };
   }
 
   const windowStart = new Date(Date.parse(input.created_at) - DEDUPE_MS).toISOString();
+  const tokenKey = input.type === "click" ? (input.link_id ?? "") : "";
+  const usage = await db
+    .prepare(
+      `SELECT COUNT(*) AS in_window
+       FROM events
+       WHERE message_id = ? AND type = ? AND ifnull(ip_hash, '') = ? AND ifnull(link_id, '') = ?
+         AND created_at >= ?`,
+    )
+    .bind(input.message_id, input.type, input.ip_hash ?? "", tokenKey, windowStart)
+    .first<{ in_window: number | string | null }>();
+  const inWindow = Number(usage?.in_window ?? 0);
+  const firstSignalMissing = input.type === "open" ? !message.first_open_at : !message.first_click_at;
+  if (!eventWriteAllowed(inWindow) && !firstSignalMissing) {
+    return { first: false, deduped: true, rateLimited: true, message };
+  }
+
   const prior = await db
     .prepare(
       `SELECT id FROM events
@@ -187,7 +217,7 @@ export async function recordEvent(db: D1Database, input: RecordEventInput): Prom
   }
 
   const updated = (await getMessage(db, input.message_id)) ?? message;
-  return { first, deduped, message: updated };
+  return { first, deduped, rateLimited: false, message: updated };
 }
 
 export function serializeMessage(

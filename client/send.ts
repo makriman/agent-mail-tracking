@@ -1,5 +1,5 @@
 import { sendRawGmail } from "./gmail";
-import { assertNoHtmlBody } from "./guard";
+import { assertNoHtmlBody, assertSendableRawMime } from "./guard";
 import { mintTrackedMessage } from "./mint";
 import { sendRawMimeSmtp } from "./smtp";
 import {
@@ -61,6 +61,8 @@ export async function sendTrackedEmail(opts: SendTrackedEmailOptions): Promise<S
     webhookUrl: opts.webhookUrl,
     trackingBaseUrl: opts.trackingBaseUrl,
   });
+  // mintTrackedMessage already checks. Repeat at the send boundary so SMTP DATA / Gmail raw cannot ship a body that lost the pixel.
+  assertSendableRawMime(minted);
 
   if (opts.via === "smtp") {
     if (!opts.smtp) throw new AmtClientError("smtp config required (host, port, user, pass)");
