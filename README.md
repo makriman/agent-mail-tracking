@@ -93,7 +93,7 @@ Open tracking is the 1×1 `<img>` pixel. CSS/`background-image` tricks are unrel
 - **Cloudflare Worker** (Hono + TypeScript) — API, pixel, click 302, dashboard HTML
 - **D1** — `messages`, `links`, `events` (see [schema.sql](./schema.sql))
 - **Secrets** — `API_KEY` (dashboard + `/v1`), `TOKEN_SECRET` (HMAC for `/o/` and `/c/` tokens)
-- Events store **`ip_hash`**, never raw IP. Classification is best-effort (`gmail_proxy`, `apple_mpp`, `security_scanner`, `human_likely`, `unknown`).
+- Events store **`ip_hash`**, never raw IP. Each IP may insert 8 open or click rows per hour for one token; many IPs can still grow D1 ([docs/SECURITY-D1.md](./docs/SECURITY-D1.md)). Classification is best-effort (`gmail_proxy`, `apple_mpp`, `security_scanner`, `human_likely`, `unknown`).
 
 **Status** (confidence hierarchy): `replied` (future) > `clicked` > `high_confidence_open` > `proxy_open` > `no_signal`.
 
