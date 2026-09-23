@@ -4,7 +4,7 @@
  * AMT mints tracked MIME; this package sends it. The Worker still does not send mail.
  * Banned: Gmail/Outlook `htmlBody` / `textBody` (strips the open-tracking `<img>`).
  */
-export { HTML_BODY_BANNED, AmtHtmlBodyError, assertNoHtmlBody } from "./guard";
+export { HTML_BODY_BANNED, AmtHtmlBodyError, assertNoHtmlBody, assertSendableRawMime, mimeHasOpenPixel } from "./guard";
 export { mintTrackedMessage, shapeMintRequest, trimBaseUrl } from "./mint";
 export { sendRawMimeSmtp, envelopeAddress, smtpDataPayload } from "./smtp";
 export {

@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HTML_BODY_BANNED, assertNoHtmlBody } from "../client/guard";
+import { HTML_BODY_BANNED, assertNoHtmlBody, assertSendableRawMime, mimeHasOpenPixel } from "../client/guard";
 import { shapeGmailRawSend, GMAIL_SEND_SCOPE, gmailSendUrl } from "../client/gmail";
 import { mintTrackedMessage, shapeMintRequest, trimBaseUrl } from "../client/mint";
+import { envelopeAddress } from "../client/smtp";
 import { AmtClientError } from "../client/types";
 
 afterEach(() => {
@@ -81,6 +82,7 @@ describe("shapeMintRequest", () => {
 });
 
 describe("mintTrackedMessage (mock fetch)", () => {
+  const rawMime = 'MIME-Version: 1.0\r\nFrom: you@icloud.com\r\n<img src="https://track.example/o/tok">';
   const minted = {
     message_id: "msg_test",
     mode: "plain_looking",
@@ -93,8 +95,8 @@ describe("mintTrackedMessage (mock fetch)", () => {
     subject: "Hello",
     text: "Hi",
     html: '<p>Hi</p>\n<img src="https://track.example/o/tok" width="1" height="1" alt="">',
-    raw_mime: "MIME-Version: 1.0\r\nFrom: you@icloud.com\r\n<img src=\"https://track.example/o/tok\">",
-    raw_base64url: "TUlNRS1WZXJzaW9uOiAxLjA",
+    raw_mime: rawMime,
+    raw_base64url: Buffer.from(rawMime, "utf8").toString("base64url"),
     pixel_url: "https://track.example/o/tok",
     base_url: "https://track.greatindiancompany.com",
     links: [],
@@ -156,6 +158,50 @@ describe("mintTrackedMessage (mock fetch)", () => {
   });
 });
 
+describe("raw mime pixel guard", () => {
+  const rawMime = 'MIME-Version: 1.0\r\n<img src="https://track.example/o/tok" width="1" height="1" alt="">';
+
+  it("accepts matching raw_mime and raw_base64url that still contain the pixel", () => {
+    expect(mimeHasOpenPixel("line=\r\n<img src=\"https://track.example/o/tok\">")).toBe(true);
+    expect(() =>
+      assertSendableRawMime({
+        mode: "plain_looking",
+        raw_mime: rawMime,
+        raw_base64url: Buffer.from(rawMime, "utf8").toString("base64url"),
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses a Gmail raw payload that dropped the img or diverged from raw_mime", () => {
+    const stripped = "MIME-Version: 1.0\r\n\r\nHello";
+    expect(() =>
+      assertSendableRawMime({
+        mode: "plain_looking",
+        raw_mime: stripped,
+        raw_base64url: Buffer.from(stripped, "utf8").toString("base64url"),
+      }),
+    ).toThrow(/missing the open-tracking/);
+    expect(() =>
+      assertSendableRawMime({
+        mode: "html",
+        raw_mime: rawMime,
+        raw_base64url: Buffer.from(stripped, "utf8").toString("base64url"),
+      }),
+    ).toThrow(/does not match raw_mime/);
+  });
+
+  it("allows plain_only without an img when the two raw fields match", () => {
+    const plain = "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nHi";
+    expect(() =>
+      assertSendableRawMime({
+        mode: "plain_only",
+        raw_mime: plain,
+        raw_base64url: Buffer.from(plain, "utf8").toString("base64url"),
+      }),
+    ).not.toThrow();
+  });
+});
+
 describe("htmlBody guard", () => {
   it("throws on htmlBody and textBody", () => {
     expect(() => assertNoHtmlBody({ htmlBody: "<p>x</p>" })).toThrow(/htmlBody is banned/);
@@ -172,6 +218,14 @@ describe("gmail raw shaping", () => {
     expect(req.body).toEqual({ raw: "QUJD" });
     expect(req.body).not.toHaveProperty("htmlBody");
     expect(GMAIL_SEND_SCOPE).toBe("https://www.googleapis.com/auth/gmail.send");
+  });
+});
+
+describe("envelopeAddress", () => {
+  it("extracts an addr-spec and rejects header or extra-recipient injection", () => {
+    expect(envelopeAddress("You <you@icloud.com>")).toBe("you@icloud.com");
+    expect(() => envelopeAddress("a@b.com, c@d.com")).toThrow(/invalid_address/);
+    expect(() => envelopeAddress("a@b.com\r\nRCPT TO:<c@d.com>")).toThrow(/invalid_address/);
   });
 });
 

@@ -3,10 +3,20 @@ import * as tls from "node:tls";
 import { AmtClientError, type SmtpSendOptions, type SmtpSendResult } from "./types";
 
 export function envelopeAddress(value: string): string {
+  if (/[\r\n]/.test(value)) {
+    throw new AmtClientError(`invalid_address: ${value.replace(/[\r\n]+/g, " ").trim()}`);
+  }
   const trimmed = value.trim();
-  const angled = trimmed.match(/<([^<>]+@[^<>]+)>/);
-  const addr = (angled?.[1] ?? trimmed).replace(/^mailto:/i, "").trim();
-  if (!addr.includes("@") || /[\r\n]/.test(addr) || addr.length > 320) {
+  let addr = trimmed;
+  if (trimmed.includes("<") || trimmed.includes(">")) {
+    const angled = trimmed.match(/^([^<>]*)<([^<>]+)>([^<>]*)$/);
+    if (!angled || angled[3]?.trim()) {
+      throw new AmtClientError(`invalid_address: ${trimmed}`);
+    }
+    addr = angled[2]!.trim();
+  }
+  addr = addr.replace(/^mailto:/i, "").trim();
+  if (!/^[^\s<>"']+@[^\s<>"']+$/.test(addr) || addr.length > 320) {
     throw new AmtClientError(`invalid_address: ${trimmed}`);
   }
   return addr;
@@ -53,7 +63,7 @@ class SmtpSession {
 
   private attach(socket: net.Socket) {
     socket.on("data", (chunk: Buffer | string) => {
-      this.buf += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      this.buf += typeof chunk === "string" ? chunk : chunk.toString();
       let nl: number;
       while ((nl = this.buf.indexOf("\n")) >= 0) {
         let line = this.buf.slice(0, nl);
@@ -169,7 +179,8 @@ export async function sendRawMimeSmtp(opts: SmtpSendOptions): Promise<SmtpSendRe
   if (!Number.isFinite(port) || port <= 0) throw new AmtClientError("smtp port is required");
   const secure = opts.secure ?? port === 465;
   const timeoutMs = opts.timeoutMs ?? 60_000;
-  const ehloName = opts.ehloName ?? "amt.localhost";
+  const ehloName = (opts.ehloName ?? "amt.localhost").replace(/[\r\n\s]/g, "");
+  if (!ehloName) throw new AmtClientError("invalid smtp ehlo name");
   const mailFrom = envelopeAddress(opts.from);
   const rcptTo = envelopeAddress(opts.to);
   if (!opts.rawMime) throw new AmtClientError("rawMime is required");
