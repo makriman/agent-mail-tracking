@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HTML_BODY_BANNED, assertNoHtmlBody, assertSendableRawMime, mimeHasOpenPixel } from "../client/guard";
 import { shapeGmailRawSend, GMAIL_SEND_SCOPE, gmailSendUrl } from "../client/gmail";
 import { mintTrackedMessage, shapeMintRequest, trimBaseUrl } from "../client/mint";
+import { envelopeAddress, smtpEhloName } from "../client/smtp";
 import { AmtClientError } from "../client/types";
 
 afterEach(() => {
@@ -231,6 +232,25 @@ describe("gmail raw shaping", () => {
     expect(req.body).toEqual({ raw: "QUJD" });
     expect(req.body).not.toHaveProperty("htmlBody");
     expect(GMAIL_SEND_SCOPE).toBe("https://www.googleapis.com/auth/gmail.send");
+  });
+});
+
+describe("envelopeAddress", () => {
+  it("accepts one addr-spec and rejects a smuggled recipient", () => {
+    expect(envelopeAddress("You <you@icloud.com>")).toBe("you@icloud.com");
+    expect(envelopeAddress("you@icloud.com")).toBe("you@icloud.com");
+    expect(() => envelopeAddress("a@b.com, c@d.com")).toThrow(/invalid_address/);
+    expect(() => envelopeAddress("a@b.com\r\nRCPT TO:<c@d.com>")).toThrow(/invalid_address/);
+    expect(() => envelopeAddress("You <you@icloud.com> extra")).toThrow(/invalid_address/);
+  });
+});
+
+describe("smtpEhloName", () => {
+  it("strips controls and whitespace and rejects an empty name", () => {
+    expect(smtpEhloName(undefined)).toBe("amt.localhost");
+    expect(smtpEhloName("mail.example\r\nRCPT")).toBe("mail.exampleRCPT");
+    expect(smtpEhloName(" mail.example ")).toBe("mail.example");
+    expect(() => smtpEhloName("\r\n \t")).toThrow(/invalid smtp ehlo name/);
   });
 });
 

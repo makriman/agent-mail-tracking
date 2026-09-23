@@ -111,7 +111,7 @@ function fmt(ts: string | null): string {
   return ts ? escapeHtml(ts.replace("T", " ").replace(/\.\d+Z$/, " UTC").replace("Z", " UTC")) : "—";
 }
 
-export function renderList(messages: MessageRow[]): string {
+export function renderList(messages: MessageRow[], humanOpenIds: ReadonlySet<string> = new Set()): string {
   if (messages.length === 0) {
     return layout(
       "Agent Mail Track",
@@ -120,7 +120,7 @@ export function renderList(messages: MessageRow[]): string {
   }
   const rows = messages
     .map((m) => {
-      const status = messageStatus(m);
+      const status = messageStatus(m, humanOpenIds.has(m.id));
       const opens = m.open_tracking ? String(m.open_count) : "—";
       return `<tr>
         <td class="mono">${fmt(m.created_at)}</td>

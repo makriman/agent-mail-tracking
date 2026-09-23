@@ -10,6 +10,7 @@ import {
   insertLinks,
   insertMessage,
   listEvents,
+  listHumanOpenIds,
   listLinks,
   listMessages,
   recordEvent,
@@ -30,13 +31,20 @@ import { canonicalRedirectHref, isSafeRedirectUrl } from "./redirect";
 import { hashIp, signToken, verifyToken } from "./tokens";
 import type { CreateMessageBody, Mode } from "./types";
 import { MODES } from "./types";
-import { canonicalWebhookUrl, fireWebhook, webhookPayload } from "./webhook";
+import {
+  canonicalWebhookUrl,
+  fireWebhook,
+  webhookDeliveryFromEnv,
+  webhookHostAllowed,
+  webhookPayload,
+} from "./webhook";
 
 type AppEnv = { Bindings: Env };
 
 const app = new Hono<AppEnv>();
 
 const MAX_BODY = 256 * 1024;
+const MAX_JSON = 512 * 1024;
 const MAX_METADATA = 8 * 1024;
 const MAX_LIST = 100;
 
@@ -87,6 +95,8 @@ app.get("/o/:token", async (c) => {
         fireWebhook(
           result.message.webhook_url,
           webhookPayload("first_open", result.message, classification, status, now),
+          undefined,
+          webhookDeliveryFromEnv(c.env),
         ),
       );
     }
@@ -135,6 +145,8 @@ app.get("/c/:token", async (c) => {
         fireWebhook(
           result.message.webhook_url,
           webhookPayload("first_click", result.message, classification, status, now),
+          undefined,
+          webhookDeliveryFromEnv(c.env),
         ),
       );
     }
@@ -156,7 +168,11 @@ app.use("/v1/*", requireApiKey);
 
 app.get("/", requireApiKey, async (c) => {
   const messages = await listMessages(c.env.DB, 50);
-  return c.html(renderList(messages), 200, HTML_HEADERS);
+  const humanOpenIds = await listHumanOpenIds(
+    c.env.DB,
+    messages.map((message) => message.id),
+  );
+  return c.html(renderList(messages, humanOpenIds), 200, HTML_HEADERS);
 });
 
 app.get("/m/:id", requireApiKey, async (c) => {
@@ -177,14 +193,23 @@ app.post("/v1/messages", async (c) => {
     return c.json({ error: "server_misconfigured" }, 500);
   }
 
+  const advertised = Number(c.req.header("content-length") ?? "");
+  if (Number.isFinite(advertised) && advertised > MAX_JSON) {
+    return c.json({ error: "body_too_large" }, 413);
+  }
+
   let body: CreateMessageBody;
   try {
-    body = await c.req.json<CreateMessageBody>();
+    const raw = await c.req.arrayBuffer();
+    if (raw.byteLength > MAX_JSON) {
+      return c.json({ error: "body_too_large" }, 413);
+    }
+    body = JSON.parse(new TextDecoder().decode(raw)) as CreateMessageBody;
   } catch {
     return c.json({ error: "invalid_json" }, 400);
   }
 
-  const error = validateCreate(body);
+  const error = validateCreate(body, webhookDeliveryFromEnv(c.env));
   if (error) return c.json({ error }, 400);
 
   const mode: Mode = body.mode ?? "plain_looking";
@@ -279,11 +304,11 @@ app.get("/v1/messages", async (c) => {
   const raw = Number(c.req.query("limit") ?? "50");
   const limit = Number.isFinite(raw) ? Math.min(Math.max(1, Math.floor(raw)), MAX_LIST) : 50;
   const rows = await listMessages(c.env.DB, limit);
-  const messages = [];
-  for (const row of rows) {
-    const human = row.open_tracking ? await hadHumanOpen(c.env.DB, row.id) : false;
-    messages.push(serializeMessage(row, { humanOpen: human }));
-  }
+  const humanOpenIds = await listHumanOpenIds(
+    c.env.DB,
+    rows.map((row) => row.id),
+  );
+  const messages = rows.map((row) => serializeMessage(row, { humanOpen: humanOpenIds.has(row.id) }));
   return c.json({ messages });
 });
 
@@ -326,7 +351,10 @@ app.notFound((c) => {
 
 export default app;
 
-function validateCreate(body: CreateMessageBody): string | null {
+function validateCreate(
+  body: CreateMessageBody,
+  webhook: { disabled?: boolean; hostAllowlist?: readonly string[] },
+): string | null {
   if (!body || typeof body !== "object") return "invalid_body";
   if (
     typeof body.to !== "string" ||
@@ -375,7 +403,9 @@ function validateCreate(body: CreateMessageBody): string | null {
   }
 
   if (body.webhook_url != null) {
-    if (typeof body.webhook_url !== "string" || !canonicalWebhookUrl(body.webhook_url)) {
+    if (webhook.disabled) return "webhooks_disabled";
+    const canonical = typeof body.webhook_url === "string" ? canonicalWebhookUrl(body.webhook_url) : null;
+    if (!canonical || !webhookHostAllowed(canonical, webhook.hostAllowlist)) {
       return "invalid_webhook_url";
     }
   }

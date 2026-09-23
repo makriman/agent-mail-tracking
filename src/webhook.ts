@@ -40,8 +40,18 @@ export function webhookAddressesAllowed(ips: readonly string[]): boolean {
   return ips.length > 0 && ips.every((ip) => !isBlockedAddress(ip));
 }
 
-/** `deny` skips the POST. `unknown` (lookup error or no answers) still POSTs, so a DNS hiccup does not drop a real webhook. */
+/** `deny` skips the POST. `unknown` (lookup error or no answers) still POSTs unless `dnsFailClosed` is set. */
 export type WebhookDnsDecision = "allow" | "deny" | "unknown";
+
+/**
+ * Operator knobs. Defaults preserve delivery: DNS errors still POST, and any public https host is allowed.
+ * These do not pin the Workers fetch to a resolved address.
+ */
+export interface WebhookDeliveryOptions {
+  disabled?: boolean;
+  dnsFailClosed?: boolean;
+  hostAllowlist?: readonly string[];
+}
 
 export function webhookDnsDecision(ips: readonly string[] | null): WebhookDnsDecision {
   if (!ips || ips.length === 0) return "unknown";
@@ -51,9 +61,18 @@ export function webhookDnsDecision(ips: readonly string[] | null): WebhookDnsDec
 export type WebhookHostResolver = (host: string) => Promise<WebhookDnsDecision>;
 
 /**
+ * Explicit TTL 0 (or negative) is the usual DNS-rebinding signal: resolvers must not cache it.
+ * A missing TTL is not treated as 0. Cloudflare's JSON API includes TTL on each answer.
+ * Skipping the POST when that field is absent would drop webhooks on a resolver that omits it.
+ */
+export function webhookDnsTtlDenied(ttl: number | undefined): boolean {
+  return typeof ttl === "number" && ttl <= 0;
+}
+
+/**
  * Resolve A and AAAA via DNS-over-HTTPS.
- * Deny only when an answer is actually non-public. Errors and empty answers are `unknown` (fail open).
- * Follow-up: this does not pin the connect address, so a name can still rebind after the lookup.
+ * Deny when an answer is non-public or has TTL <= 0. Errors and empty answers are `unknown`.
+ * This does not pin the address Workers `fetch` will connect to.
  */
 export async function resolveWebhookHost(host: string): Promise<WebhookDnsDecision> {
   const a = await lookupDoh(host, "A");
@@ -63,6 +82,34 @@ export async function resolveWebhookHost(host: string): Promise<WebhookDnsDecisi
   if (aaaa.status === "blocked") return "deny";
   if (aaaa.status === "unknown") return "unknown";
   return webhookDnsDecision([...a.ips, ...aaaa.ips]);
+}
+
+export function parseWebhookHostAllowlist(raw: string | undefined | null): readonly string[] | undefined {
+  if (raw == null) return undefined;
+  const hosts = raw
+    .split(",")
+    .map((part) => normalizeHost(part.trim()))
+    .filter((part) => part.length > 0);
+  return hosts.length > 0 ? hosts : undefined;
+}
+
+export function webhookDeliveryFromEnv(env: {
+  WEBHOOKS_DISABLED?: string;
+  WEBHOOK_DNS_FAIL_CLOSED?: string;
+  WEBHOOK_HOST_ALLOWLIST?: string;
+}): WebhookDeliveryOptions {
+  return {
+    disabled: envFlag(env.WEBHOOKS_DISABLED),
+    dnsFailClosed: envFlag(env.WEBHOOK_DNS_FAIL_CLOSED),
+    hostAllowlist: parseWebhookHostAllowlist(env.WEBHOOK_HOST_ALLOWLIST),
+  };
+}
+
+export function webhookHostAllowed(url: string, allowlist: readonly string[] | undefined): boolean {
+  if (!allowlist || allowlist.length === 0) return true;
+  const host = webhookDnsHost(url);
+  if (!host) return false;
+  return allowlist.some((entry) => normalizeHost(entry) === host);
 }
 
 export async function fireWebhook(
@@ -77,18 +124,21 @@ export async function fireWebhook(
     occurred_at: string;
   },
   resolveHost: WebhookHostResolver = resolveWebhookHost,
+  options: WebhookDeliveryOptions = {},
 ): Promise<void> {
   const target = canonicalWebhookUrl(webhookUrl);
   if (!target) return;
+  if (options.disabled) return;
+  if (!webhookHostAllowed(target, options.hostAllowlist)) return;
   const host = webhookDnsHost(target);
   if (host && hostNeedsDns(host)) {
-    let decision: WebhookDnsDecision = "unknown";
-    try {
-      decision = await resolveHost(host);
-    } catch {
-      decision = "unknown";
-    }
-    if (decision === "deny") return;
+    // Two lookups, back to back. The second one runs immediately before POST so a name that
+    // flips to a private address between checks is skipped. This is not a connect-IP pin:
+    // Workers fetch resolves DNS on its own after we return.
+    const first = await lookupDecision(host, resolveHost);
+    if (skipWebhookForDns(first, options.dnsFailClosed)) return;
+    const second = await lookupDecision(host, resolveHost);
+    if (skipWebhookForDns(second, options.dnsFailClosed)) return;
   }
 
   const ctrl = new AbortController();
@@ -127,6 +177,24 @@ export function webhookPayload(
     classification,
     occurred_at,
   };
+}
+
+function envFlag(value: string | undefined): boolean {
+  if (!value) return false;
+  return /^(1|true|yes|on)$/i.test(value.trim());
+}
+
+async function lookupDecision(host: string, resolveHost: WebhookHostResolver): Promise<WebhookDnsDecision> {
+  try {
+    return await resolveHost(host);
+  } catch {
+    return "unknown";
+  }
+}
+
+function skipWebhookForDns(decision: WebhookDnsDecision, failClosed: boolean | undefined): boolean {
+  if (decision === "deny") return true;
+  return decision === "unknown" && Boolean(failClosed);
 }
 
 function normalizeHost(hostname: string): string {
@@ -257,13 +325,13 @@ async function lookupDoh(
     if (!res.ok) return { status: "unknown" };
     const body = (await res.json()) as {
       Status?: number;
-      Answer?: { type?: number; data?: string }[];
+      Answer?: { type?: number; TTL?: number; data?: string }[];
     };
     if (body.Status !== 0) return { status: "unknown" };
     const ips: string[] = [];
     for (const answer of body.Answer ?? []) {
       if (answer.type !== qtype || typeof answer.data !== "string") continue;
-      if (isBlockedAddress(answer.data)) return { status: "blocked" };
+      if (webhookDnsTtlDenied(answer.TTL) || isBlockedAddress(answer.data)) return { status: "blocked" };
       ips.push(answer.data);
     }
     return { status: "ok", ips };
