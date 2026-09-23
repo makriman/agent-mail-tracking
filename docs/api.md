@@ -107,7 +107,9 @@ Never interpret `opens: null` as zero opens.
 
 For `plain_only`, `opens` is `null`, `open_tracking` is `false`, and `raw_mime` is `text/plain` only (no pixel — never claim opens).
 
-Errors: `400` `{ "error": "…" }` (`invalid_to`, `text_required`, `html_required`, `invalid_mode`, …), `401` unauthorized.
+The configured `API_KEY` may mint **1000** messages per rolling hour (`MINT_WRITES_PER_KEY_PER_HOUR`). Under that cap the `201` body is unchanged. At the cap the response is `429` `{ "error": "rate_limited" }` with `Retry-After` (seconds until the oldest mint in the window ages out) and nothing is written. The batch CLI calls this route once per row, so a wave shares the same budget. Two 500-row mint-only waves fit in one hour. See [SECURITY-RESIDUALS-2026-09-23.md](./SECURITY-RESIDUALS-2026-09-23.md).
+
+Errors: `400` `{ "error": "…" }` (`invalid_to`, `text_required`, `html_required`, `invalid_mode`, …), `401` unauthorized, `429` `rate_limited`.
 
 ## `GET /v1/messages`
 

@@ -93,11 +93,12 @@ Open tracking is the 1×1 `<img>` pixel. CSS/`background-image` tricks are unrel
 - **Cloudflare Worker** (Hono + TypeScript) — API, pixel, click 302, dashboard HTML
 - **D1** — `messages`, `links`, `events` (see [schema.sql](./schema.sql))
 - **Secrets** — `API_KEY` (dashboard + `/v1`), `TOKEN_SECRET` (HMAC for `/o/` and `/c/` tokens)
+- **Mint cap** — `POST /v1/messages` allows **1000** successful mints per rolling hour for the configured `API_KEY` (counted from D1). Over the cap the API returns `429` and writes nothing. The batch CLI uses this same route.
 - Events store **`ip_hash`**, never raw IP. Each IP may insert 8 open or click rows per hour for one token; many IPs can still grow D1 ([docs/SECURITY-D1.md](./docs/SECURITY-D1.md)). Classification is best-effort (`gmail_proxy`, `apple_mpp`, `security_scanner`, `human_likely`, `unknown`).
 
 **Status** (confidence hierarchy): `replied` (future) > `clicked` > `high_confidence_open` > `proxy_open` > `no_signal`.
 
-Details: [docs/api.md](./docs/api.md), [docs/events.md](./docs/events.md).
+Details: [docs/api.md](./docs/api.md), [docs/events.md](./docs/events.md). Security residuals (MCP #6 hold, webhook TCP pin, multi-IP D1, mint cap): [docs/SECURITY-RESIDUALS-2026-09-23.md](./docs/SECURITY-RESIDUALS-2026-09-23.md).
 
 ## Deploy
 

@@ -10,9 +10,59 @@ const DEDUPE_MS = 60 * 60 * 1000;
  */
 export const EVENT_WRITES_PER_IP_TOKEN_PER_HOUR = 8;
 
+/** Rolling window for successful POST /v1/messages inserts. */
+export const MINT_WINDOW_MS = 60 * 60 * 1000;
+
+/**
+ * v0 has one API_KEY. Every successful mint is that key's bucket.
+ * 1000 leaves room for two documented 500-row mint-only waves in the same hour.
+ * The count is rows in D1, so it survives a new isolate.
+ */
+export const MINT_WRITES_PER_KEY_PER_HOUR = 1000;
+
 export function eventWriteAllowed(inWindow: number): boolean {
   if (!Number.isFinite(inWindow)) return false;
   return inWindow < EVENT_WRITES_PER_IP_TOKEN_PER_HOUR;
+}
+
+export function mintWriteAllowed(inWindow: number): boolean {
+  if (!Number.isFinite(inWindow)) return false;
+  return inWindow < MINT_WRITES_PER_KEY_PER_HOUR;
+}
+
+export interface MintWindowUsage {
+  inWindow: number;
+  /** Oldest message timestamp inside the window, when any row counts. */
+  oldest: string | null;
+}
+
+export async function mintWindowUsage(db: D1Database, nowIso: string): Promise<MintWindowUsage> {
+  const startMs = Date.parse(nowIso);
+  if (!Number.isFinite(startMs)) return { inWindow: Number.NaN, oldest: null };
+  const windowStart = new Date(startMs - MINT_WINDOW_MS).toISOString();
+  const row = await db
+    .prepare(
+      `SELECT COUNT(*) AS in_window, MIN(created_at) AS oldest
+       FROM messages
+       WHERE created_at >= ?`,
+    )
+    .bind(windowStart)
+    .first<{ in_window: number | string | null; oldest: string | null }>();
+  return {
+    inWindow: Number(row?.in_window ?? 0),
+    oldest: row?.oldest ?? null,
+  };
+}
+
+/** Seconds until the oldest in-window mint falls out of the rolling hour. */
+export function mintRetryAfterSeconds(nowIso: string, oldestIso: string | null): number {
+  const nowMs = Date.parse(nowIso);
+  const oldestMs = oldestIso ? Date.parse(oldestIso) : Number.NaN;
+  const retryMs =
+    Number.isFinite(nowMs) && Number.isFinite(oldestMs) ? oldestMs + MINT_WINDOW_MS : nowMs + MINT_WINDOW_MS;
+  const secs = Math.ceil((retryMs - nowMs) / 1000);
+  if (!Number.isFinite(secs) || secs < 1) return 1;
+  return secs;
 }
 
 export async function insertMessage(
