@@ -99,6 +99,14 @@ Open tracking is the 1×1 `<img>` pixel. CSS/`background-image` tricks are unrel
 
 Details: [docs/api.md](./docs/api.md), [docs/events.md](./docs/events.md).
 
+## Hardening drafts (2026-09-23)
+
+Open drafts. Merging one does not deploy the Worker.
+
+- Stack map: [docs/HARDENING-STACK-2026-09-23.md](./docs/HARDENING-STACK-2026-09-23.md)
+- Webhook / DNS rebinding: [docs/SECURITY-WEBHOOK.md](./docs/SECURITY-WEBHOOK.md)
+- Multi-IP D1 fill: [docs/SECURITY-D1.md](./docs/SECURITY-D1.md)
+
 ## Deploy
 
 Requires a Cloudflare account and [Wrangler](https://developers.cloudflare.com/workers/wrangler/).
