@@ -7,6 +7,7 @@ import {
   isBlockedAddress,
   resolveWebhookHost,
   webhookAddressesAllowed,
+  webhookDnsDecision,
   webhookPayload,
 } from "../src/webhook";
 
@@ -64,6 +65,10 @@ describe("webhook address policy", () => {
     expect(webhookAddressesAllowed(["8.8.8.8", "10.0.0.1"])).toBe(false);
     expect(webhookAddressesAllowed([])).toBe(false);
     expect(webhookAddressesAllowed(["8.8.8.8"])).toBe(true);
+    expect(webhookDnsDecision(["8.8.8.8"])).toBe("allow");
+    expect(webhookDnsDecision(["10.0.0.1"])).toBe("deny");
+    expect(webhookDnsDecision([])).toBe("unknown");
+    expect(webhookDnsDecision(null)).toBe("unknown");
   });
 });
 
@@ -79,7 +84,7 @@ describe("resolveWebhookHost", () => {
       return new Response(JSON.stringify({ Status: 0, Answer: [{ type: qtype, data }] }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
-    await expect(resolveWebhookHost("hooks.example")).resolves.toEqual(["8.8.8.8", "2606:4700:4700::1111"]);
+    await expect(resolveWebhookHost("hooks.example")).resolves.toBe("allow");
 
     fetchMock.mockImplementation(async (url: string) => {
       const type = new URL(String(url)).searchParams.get("type");
@@ -88,7 +93,10 @@ describe("resolveWebhookHost", () => {
       }
       return new Response(JSON.stringify({ Status: 0, Answer: [{ type: 1, data: "1.2.3.4" }] }), { status: 200 });
     });
-    await expect(resolveWebhookHost("rebind.example")).resolves.toBeNull();
+    await expect(resolveWebhookHost("rebind.example")).resolves.toBe("deny");
+
+    fetchMock.mockImplementation(async () => new Response("nope", { status: 503 }));
+    await expect(resolveWebhookHost("hooks.example")).resolves.toBe("unknown");
   });
 });
 
@@ -109,7 +117,7 @@ describe("fireWebhook", () => {
     await fireWebhook(
       "https://hooks.example/mail",
       webhookPayload("first_open", message, "human_likely", "high_confidence_open", "2026-09-23T00:00:00.000Z"),
-      async () => ["8.8.8.8"],
+      async () => "allow",
     );
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("https://hooks.example/mail");
@@ -120,12 +128,25 @@ describe("fireWebhook", () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
     const payload = webhookPayload("first_click", message, "unknown", "clicked", "2026-09-23T00:00:00.000Z");
-    await fireWebhook("https://hooks.example/mail", payload, async () => ["10.1.2.3"]);
+    await fireWebhook("https://hooks.example/mail", payload, async () => "deny");
     await fireWebhook("https://169.254.169.254/latest/meta-data", payload, async () => {
       throw new Error("resolver must not run");
     });
-    await fireWebhook("https://hooks.example/mail", payload, async () => []);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still POSTs when DNS is inconclusive so a lookup failure does not drop a real webhook", async () => {
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      expect(init?.redirect).toBe("error");
+      return new Response(null, { status: 204 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await fireWebhook(
+      "https://hooks.example/mail",
+      webhookPayload("first_open", message, "unknown", "proxy_open", "2026-09-23T00:00:00.000Z"),
+      async () => "unknown",
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it("fetches http loopback without a DNS lookup", async () => {

@@ -4,16 +4,15 @@ import type { Classification, EventRow, EventType, LinkRow, MessageRow, Mode } f
 const DEDUPE_MS = 60 * 60 * 1000;
 
 /**
- * Unauthenticated open/click URLs insert into D1. Cap rows so a leaked pixel or
- * click link cannot fill the database. Deduped timeline rows are still stored
- * until the cap; past it the GIF and redirect still succeed and the insert is skipped.
+ * Same IP hammering one open or click token must not fill D1.
+ * The first hit from that IP on that token in the hour is always stored (first-open / timeline).
+ * A different IP is a different bucket, so spam cannot consume someone else's first event.
  */
-export const EVENT_WRITES_PER_HOUR = 60;
-export const EVENT_WRITES_LIFETIME = 240;
+export const EVENT_WRITES_PER_IP_TOKEN_PER_HOUR = 8;
 
-export function eventWriteAllowed(inWindow: number, total: number): boolean {
-  if (!Number.isFinite(inWindow) || !Number.isFinite(total)) return false;
-  return inWindow < EVENT_WRITES_PER_HOUR && total < EVENT_WRITES_LIFETIME;
+export function eventWriteAllowed(inWindow: number): boolean {
+  if (!Number.isFinite(inWindow)) return false;
+  return inWindow < EVENT_WRITES_PER_IP_TOKEN_PER_HOUR;
 }
 
 export async function insertMessage(
@@ -139,18 +138,19 @@ export async function recordEvent(db: D1Database, input: RecordEventInput): Prom
   }
 
   const windowStart = new Date(Date.parse(input.created_at) - DEDUPE_MS).toISOString();
+  const tokenKey = input.type === "click" ? (input.link_id ?? "") : "";
   const usage = await db
     .prepare(
-      `SELECT COUNT(*) AS total,
-              COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0) AS in_window
+      `SELECT COUNT(*) AS in_window
        FROM events
-       WHERE message_id = ? AND type = ?`,
+       WHERE message_id = ? AND type = ? AND ifnull(ip_hash, '') = ? AND ifnull(link_id, '') = ?
+         AND created_at >= ?`,
     )
-    .bind(windowStart, input.message_id, input.type)
-    .first<{ total: number | string | null; in_window: number | string | null }>();
-  const total = Number(usage?.total ?? 0);
+    .bind(input.message_id, input.type, input.ip_hash ?? "", tokenKey, windowStart)
+    .first<{ in_window: number | string | null }>();
   const inWindow = Number(usage?.in_window ?? 0);
-  if (!eventWriteAllowed(inWindow, total)) {
+  const firstSignalMissing = input.type === "open" ? !message.first_open_at : !message.first_click_at;
+  if (!eventWriteAllowed(inWindow) && !firstSignalMissing) {
     return { first: false, deduped: true, rateLimited: true, message };
   }
 

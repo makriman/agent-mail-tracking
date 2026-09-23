@@ -1,13 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  EVENT_WRITES_LIFETIME,
-  EVENT_WRITES_PER_HOUR,
+  EVENT_WRITES_PER_IP_TOKEN_PER_HOUR,
   eventWriteAllowed,
   recordEvent,
   type RecordEventInput,
 } from "../src/db";
 import app from "../src/index";
-import { signToken } from "../src/tokens";
+import { hashIp, signToken } from "../src/tokens";
 import type { MessageRow } from "../src/types";
 
 interface StoredEvent {
@@ -57,12 +56,20 @@ function createFakeDb(message: MessageRow, events: StoredEvent[] = []) {
                 return (messages.get(String(args[0])) ?? null) as T | null;
               }
               if (text.startsWith("SELECT COUNT(*)")) {
-                const windowStart = String(args[0]);
-                const messageId = String(args[1]);
-                const type = String(args[2]);
-                const rows = events.filter((event) => event.message_id === messageId && event.type === type);
-                const inWindow = rows.filter((event) => event.created_at >= windowStart).length;
-                return { total: rows.length, in_window: inWindow } as T;
+                const messageId = String(args[0]);
+                const type = String(args[1]);
+                const ip = String(args[2]);
+                const linkId = String(args[3]);
+                const windowStart = String(args[4]);
+                const inWindow = events.filter(
+                  (event) =>
+                    event.message_id === messageId &&
+                    event.type === type &&
+                    (event.ip_hash ?? "") === ip &&
+                    (event.link_id ?? "") === linkId &&
+                    event.created_at >= windowStart,
+                ).length;
+                return { in_window: inWindow } as T;
               }
               if (text.startsWith("SELECT id FROM events")) {
                 const messageId = String(args[0]);
@@ -138,13 +145,11 @@ function openInput(over: Partial<RecordEventInput> = {}): RecordEventInput {
 }
 
 describe("eventWriteAllowed", () => {
-  it("allows writes under both caps and rejects the next one", () => {
-    expect(eventWriteAllowed(0, 0)).toBe(true);
-    expect(eventWriteAllowed(EVENT_WRITES_PER_HOUR - 1, 0)).toBe(true);
-    expect(eventWriteAllowed(EVENT_WRITES_PER_HOUR, 0)).toBe(false);
-    expect(eventWriteAllowed(0, EVENT_WRITES_LIFETIME - 1)).toBe(true);
-    expect(eventWriteAllowed(0, EVENT_WRITES_LIFETIME)).toBe(false);
-    expect(eventWriteAllowed(Number.NaN, 0)).toBe(false);
+  it("allows the first hits from an IP and rejects the next one", () => {
+    expect(eventWriteAllowed(0)).toBe(true);
+    expect(eventWriteAllowed(EVENT_WRITES_PER_IP_TOKEN_PER_HOUR - 1)).toBe(true);
+    expect(eventWriteAllowed(EVENT_WRITES_PER_IP_TOKEN_PER_HOUR)).toBe(false);
+    expect(eventWriteAllowed(Number.NaN)).toBe(false);
   });
 });
 
@@ -157,63 +162,59 @@ describe("recordEvent rate limit", () => {
     expect(second).toMatchObject({ first: false, deduped: true, rateLimited: false });
     expect(events.map((event) => event.deduped)).toEqual([0, 1]);
     expect(messages.get("msg_1")?.open_count).toBe(1);
+    expect(messages.get("msg_1")?.first_open_at).toBe("2026-09-23T12:00:00.000Z");
   });
 
-  it("stops inserting once the hourly cap is reached", async () => {
+  it("stops one IP from filling D1 and still records a different IP", async () => {
     const { db, events, messages } = createFakeDb(messageRow());
-    for (let i = 0; i < EVENT_WRITES_PER_HOUR; i++) {
-      const result = await recordEvent(
-        db,
-        openInput({ id: `evt_${i}`, user_agent: `ua-${i}`, ip_hash: `ip-${i}` }),
-      );
+    for (let i = 0; i < EVENT_WRITES_PER_IP_TOKEN_PER_HOUR; i++) {
+      const result = await recordEvent(db, openInput({ id: `evt_${i}`, user_agent: `ua-${i}`, ip_hash: "ip-spam" }));
       expect(result?.rateLimited).toBe(false);
     }
-    const blocked = await recordEvent(db, openInput({ id: "evt_over", user_agent: "ua-over", ip_hash: "ip-over" }));
+    const blocked = await recordEvent(db, openInput({ id: "evt_over", user_agent: "ua-over", ip_hash: "ip-spam" }));
     expect(blocked).toMatchObject({ first: false, rateLimited: true });
-    expect(events).toHaveLength(EVENT_WRITES_PER_HOUR);
-    expect(messages.get("msg_1")?.open_count).toBe(EVENT_WRITES_PER_HOUR);
+    expect(events).toHaveLength(EVENT_WRITES_PER_IP_TOKEN_PER_HOUR);
+
+    const human = await recordEvent(db, openInput({ id: "evt_human", user_agent: "Mozilla/5.0 Chrome", ip_hash: "ip-human" }));
+    expect(human).toMatchObject({ deduped: false, rateLimited: false });
+    expect(events).toHaveLength(EVENT_WRITES_PER_IP_TOKEN_PER_HOUR + 1);
+    expect(messages.get("msg_1")?.open_count).toBe(EVENT_WRITES_PER_IP_TOKEN_PER_HOUR + 1);
   });
 
-  it("allows a later hour after the rolling window and still enforces the lifetime cap", async () => {
-    const old = Array.from({ length: EVENT_WRITES_PER_HOUR }, (_, i) => ({
+  it("still writes the first open when that IP bucket is already full", async () => {
+    const seeded = Array.from({ length: EVENT_WRITES_PER_IP_TOKEN_PER_HOUR }, (_, i) => ({
       id: `old_${i}`,
       message_id: "msg_1",
       link_id: null,
       type: "open",
-      created_at: "2026-09-23T10:00:00.000Z",
-      ip_hash: `ip-${i}`,
+      created_at: "2026-09-23T12:00:00.000Z",
+      ip_hash: "ip-spam",
       user_agent: `ua-${i}`,
       classification: "unknown",
       cf_country: null,
       deduped: 0,
     }));
-    const rolled = createFakeDb(messageRow(), old);
-    const allowed = await recordEvent(rolled.db, openInput({ id: "evt_new", created_at: "2026-09-23T12:00:00.000Z" }));
-    expect(allowed?.rateLimited).toBe(false);
-    expect(rolled.events).toHaveLength(EVENT_WRITES_PER_HOUR + 1);
+    const { db, events, messages } = createFakeDb(messageRow({ first_open_at: null, open_count: 0 }), seeded);
+    const result = await recordEvent(db, openInput({ id: "evt_first", ip_hash: "ip-spam" }));
+    expect(result).toMatchObject({ first: true, rateLimited: false });
+    expect(events).toHaveLength(EVENT_WRITES_PER_IP_TOKEN_PER_HOUR + 1);
+    expect(messages.get("msg_1")?.first_open_at).toBe("2026-09-23T12:00:00.000Z");
+  });
 
-    const lifetime = createFakeDb(
-      messageRow(),
-      Array.from({ length: EVENT_WRITES_LIFETIME }, (_, i) => ({
-        id: `life_${i}`,
-        message_id: "msg_1",
-        link_id: null,
-        type: "click",
-        created_at: "2020-01-01T00:00:00.000Z",
-        ip_hash: null,
-        user_agent: null,
-        classification: "unknown",
-        cf_country: null,
-        deduped: 0,
-      })),
-    );
+  it("caps clicks per link token and still records another link from the same IP", async () => {
+    const { db, events } = createFakeDb(messageRow({ first_click_at: "2026-09-23T11:00:00.000Z" }));
+    for (let i = 0; i < EVENT_WRITES_PER_IP_TOKEN_PER_HOUR; i++) {
+      await recordEvent(db, openInput({ id: `clk_${i}`, type: "click", link_id: "lnk_a", user_agent: `ua-${i}` }));
+    }
     const blocked = await recordEvent(
-      lifetime.db,
-      openInput({ id: "evt_life", type: "click", link_id: "lnk_1", created_at: "2026-09-23T12:00:00.000Z" }),
+      db,
+      openInput({ id: "clk_over", type: "click", link_id: "lnk_a", user_agent: "ua-over" }),
     );
+    const other = await recordEvent(db, openInput({ id: "clk_b", type: "click", link_id: "lnk_b", user_agent: "ua-b" }));
     expect(blocked?.rateLimited).toBe(true);
-    expect(lifetime.events).toHaveLength(EVENT_WRITES_LIFETIME);
-    expect(lifetime.messages.get("msg_1")?.click_count).toBe(0);
+    expect(other?.rateLimited).toBe(false);
+    expect(events.filter((event) => event.link_id === "lnk_a")).toHaveLength(EVENT_WRITES_PER_IP_TOKEN_PER_HOUR);
+    expect(events.filter((event) => event.link_id === "lnk_b")).toHaveLength(1);
   });
 
   it("does not write opens when open tracking is off", async () => {
@@ -226,19 +227,24 @@ describe("recordEvent rate limit", () => {
 
 describe("GET /o under the write cap", () => {
   it("still returns the GIF and does not insert or call the webhook", async () => {
-    const seeded = Array.from({ length: EVENT_WRITES_LIFETIME }, (_, i) => ({
+    const ipHash = await hashIp("203.0.113.5", "secret");
+    const seenAt = new Date().toISOString();
+    const seeded = Array.from({ length: EVENT_WRITES_PER_IP_TOKEN_PER_HOUR }, (_, i) => ({
       id: `life_${i}`,
       message_id: "msg_1",
       link_id: null,
       type: "open",
-      created_at: "2020-01-01T00:00:00.000Z",
-      ip_hash: null,
-      user_agent: null,
+      created_at: seenAt,
+      ip_hash: ipHash,
+      user_agent: `ua-${i}`,
       classification: "unknown",
       cf_country: null,
       deduped: 0,
     }));
-    const { db, events } = createFakeDb(messageRow(), seeded);
+    const { db, events } = createFakeDb(
+      messageRow({ first_open_at: seenAt, open_count: EVENT_WRITES_PER_IP_TOKEN_PER_HOUR }),
+      seeded,
+    );
     const token = await signToken("o", "msg_1", "secret");
     let waited = false;
     const res = await app.request(
@@ -256,7 +262,7 @@ describe("GET /o under the write cap", () => {
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/gif");
-    expect(events).toHaveLength(EVENT_WRITES_LIFETIME);
+    expect(events).toHaveLength(EVENT_WRITES_PER_IP_TOKEN_PER_HOUR);
     expect(waited).toBe(false);
   });
 });

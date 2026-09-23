@@ -22,7 +22,7 @@ Reply detection is a **future stub**. Every API payload includes `"replied": fal
 | `link_id` | Set on clicks; null on opens |
 | `type` | `open` \| `click` |
 | `created_at` | ISO-8601 UTC from the Worker |
-| `ip_hash` | HMAC-SHA256(`ip:{ip}`, `TOKEN_SECRET`) as base64url. Never raw IP. |
+| `ip_hash` | HMAC-SHA256(`ip:{CF-Connecting-IP}`, `TOKEN_SECRET`) as base64url. Never raw IP. `X-Forwarded-For` is ignored. |
 | `user_agent` | Truncated to 512 chars |
 | `classification` | See below |
 | `cf_country` | Cloudflare `CF-IPCountry` when present |
@@ -30,7 +30,7 @@ Reply detection is a **future stub**. Every API payload includes `"replied": fal
 
 Deduped events stay on the timeline (marked) but do not increment `open_count` / `click_count` and do not re-fire webhooks.
 
-Open and click URLs are unauthenticated, so each message may insert at most **60** `open` rows and **60** `click` rows per rolling hour, and at most **240** of each type over the life of the message (including deduped rows). Past either cap the pixel GIF and the click redirect still succeed, and no further `events` row is written. No schema migration is required; the cap is a count of existing rows.
+Open and click URLs are unauthenticated. Each IP may insert at most **8** rows per rolling hour for one token (the open token is the message; a click token is that link). The first hit from an IP on that token is always stored, and a different IP is a different bucket, so one client cannot use up another reader's first open or first click. If `first_open_at` or `first_click_at` is still empty, that signal is written even when the bucket is already full. Further hits from the capped IP still return the GIF or the redirect and do not insert. No schema migration. A botnet that rotates source IPs can still write up to 8 rows per IP per hour; that residual is not a single-URL fill.
 
 ## Classification (best-effort)
 
@@ -62,7 +62,7 @@ replied (future stub)
 
 ## Webhooks
 
-If `webhook_url` was set at create time, the Worker fire-and-forgets a POST on the **first** non-deduped open and the **first** non-deduped click. Failures are swallowed. Timeout is 5 seconds. The URL must be public `https`, or `http` to `localhost` / `127.0.0.1` for local dev. Private, link-local, metadata, and IPv6 literal hosts are rejected. Before the POST, a public hostname is resolved with DNS-over-HTTPS and the call is skipped when any address is non-public. Redirects are not followed. A name that flips from a public address to a private one after that lookup is still a residual window.
+If `webhook_url` was set at create time, the Worker fire-and-forgets a POST on the **first** non-deduped open and the **first** non-deduped click. Failures are swallowed. Timeout is 5 seconds. The URL must be public `https`, or `http` to `localhost` / `127.0.0.1` for local dev. Private, link-local, metadata, and IPv6 literal hosts are rejected. Redirects are not followed. A public hostname is also checked with DNS-over-HTTPS: the POST is skipped only when an answer is non-public. A lookup error or an empty answer still POSTs, so a DNS hiccup does not drop a legitimate webhook. Follow-up: Workers have no pinned-IP fetch here, so a name can still change from a public address to a private one after that lookup.
 
 ```json
 {

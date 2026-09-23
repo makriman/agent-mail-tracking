@@ -35,24 +35,34 @@ export function isAllowedWebhookUrl(url: string): boolean {
   return canonicalWebhookUrl(url) !== null;
 }
 
-/** Addresses from DNS (or a literal) that are safe webhook targets. Empty is not safe. */
+/** Addresses from DNS that are safe webhook targets. Empty is not a positive allow. */
 export function webhookAddressesAllowed(ips: readonly string[]): boolean {
   return ips.length > 0 && ips.every((ip) => !isBlockedAddress(ip));
 }
 
-export type WebhookHostResolver = (host: string) => Promise<readonly string[] | null>;
+/** `deny` skips the POST. `unknown` (lookup error or no answers) still POSTs, so a DNS hiccup does not drop a real webhook. */
+export type WebhookDnsDecision = "allow" | "deny" | "unknown";
+
+export function webhookDnsDecision(ips: readonly string[] | null): WebhookDnsDecision {
+  if (!ips || ips.length === 0) return "unknown";
+  return ips.some((ip) => isBlockedAddress(ip)) ? "deny" : "allow";
+}
+
+export type WebhookHostResolver = (host: string) => Promise<WebhookDnsDecision>;
 
 /**
- * Resolve A and AAAA via DNS-over-HTTPS. Null means fail closed (error, NXDOMAIN, or any private answer).
- * This narrows DNS rebinding; it does not close the gap between this lookup and the later POST.
+ * Resolve A and AAAA via DNS-over-HTTPS.
+ * Deny only when an answer is actually non-public. Errors and empty answers are `unknown` (fail open).
+ * Follow-up: this does not pin the connect address, so a name can still rebind after the lookup.
  */
-export async function resolveWebhookHost(host: string): Promise<string[] | null> {
+export async function resolveWebhookHost(host: string): Promise<WebhookDnsDecision> {
   const a = await lookupDoh(host, "A");
-  if (!a) return null;
+  if (a.status === "blocked") return "deny";
+  if (a.status === "unknown") return "unknown";
   const aaaa = await lookupDoh(host, "AAAA");
-  if (!aaaa) return null;
-  if (a.length + aaaa.length === 0) return null;
-  return [...a, ...aaaa];
+  if (aaaa.status === "blocked") return "deny";
+  if (aaaa.status === "unknown") return "unknown";
+  return webhookDnsDecision([...a.ips, ...aaaa.ips]);
 }
 
 export async function fireWebhook(
@@ -72,13 +82,13 @@ export async function fireWebhook(
   if (!target) return;
   const host = webhookDnsHost(target);
   if (host && hostNeedsDns(host)) {
-    let ips: readonly string[] | null;
+    let decision: WebhookDnsDecision = "unknown";
     try {
-      ips = await resolveHost(host);
+      decision = await resolveHost(host);
     } catch {
-      return;
+      decision = "unknown";
     }
-    if (!ips || !webhookAddressesAllowed(ips)) return;
+    if (decision === "deny") return;
   }
 
   const ctrl = new AbortController();
@@ -231,7 +241,10 @@ function expandIpv6(ip: string): string[] | null {
   return parts.map((part) => part.padStart(4, "0"));
 }
 
-async function lookupDoh(host: string, type: "A" | "AAAA"): Promise<string[] | null> {
+async function lookupDoh(
+  host: string,
+  type: "A" | "AAAA",
+): Promise<{ status: "ok"; ips: string[] } | { status: "blocked" } | { status: "unknown" }> {
   const qtype = type === "A" ? 1 : 28;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 2000);
@@ -241,21 +254,21 @@ async function lookupDoh(host: string, type: "A" | "AAAA"): Promise<string[] | n
       redirect: "error",
       signal: ctrl.signal,
     });
-    if (!res.ok) return null;
+    if (!res.ok) return { status: "unknown" };
     const body = (await res.json()) as {
       Status?: number;
       Answer?: { type?: number; data?: string }[];
     };
-    if (body.Status !== 0) return null;
+    if (body.Status !== 0) return { status: "unknown" };
     const ips: string[] = [];
     for (const answer of body.Answer ?? []) {
       if (answer.type !== qtype || typeof answer.data !== "string") continue;
-      if (isBlockedAddress(answer.data)) return null;
+      if (isBlockedAddress(answer.data)) return { status: "blocked" };
       ips.push(answer.data);
     }
-    return ips;
+    return { status: "ok", ips };
   } catch {
-    return null;
+    return { status: "unknown" };
   } finally {
     clearTimeout(timer);
   }

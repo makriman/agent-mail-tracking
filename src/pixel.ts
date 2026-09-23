@@ -8,9 +8,15 @@ export function pixelGifBytes(): Uint8Array {
   return out;
 }
 
-export const PIXEL_HEADERS = {
-  "Content-Type": "image/gif",
+/** Shared no-store set. `private` + `no-store` bypasses Workers Cache (RFC 9111). */
+export const NO_STORE_HEADERS = {
   "Cache-Control": "no-store, no-cache, must-revalidate, private, max-age=0",
+  "CDN-Cache-Control": "no-store",
   Pragma: "no-cache",
   Expires: "0",
+} as const;
+
+export const PIXEL_HEADERS = {
+  "Content-Type": "image/gif",
+  ...NO_STORE_HEADERS,
 } as const;
