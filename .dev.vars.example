@@ -1,3 +1,8 @@
 # Copy to .dev.vars for `wrangler dev`. Never commit real secrets.
 API_KEY=dev-api-key-change-me
 TOKEN_SECRET=dev-token-secret-change-me
+
+# Optional webhook controls. Leave unset for the default (any public https host, DNS errors still POST).
+# WEBHOOKS_DISABLED=1
+# WEBHOOK_DNS_FAIL_CLOSED=1
+# WEBHOOK_HOST_ALLOWLIST=hooks.example.com,127.0.0.1

@@ -6,7 +6,7 @@
  */
 export { HTML_BODY_BANNED, AmtHtmlBodyError, assertNoHtmlBody, assertSendableRawMime, mimeHasOpenPixel } from "./guard";
 export { mintTrackedMessage, shapeMintRequest, trimBaseUrl } from "./mint";
-export { sendRawMimeSmtp, envelopeAddress, smtpDataPayload } from "./smtp";
+export { sendRawMimeSmtp, envelopeAddress, smtpDataPayload, smtpEhloName } from "./smtp";
 export {
   sendRawGmail,
   resolveGmailAccessToken,

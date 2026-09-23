@@ -98,6 +98,21 @@ export async function listEvents(db: D1Database, messageId: string): Promise<Eve
   return res.results ?? [];
 }
 
+/** Message ids that have at least one non-proxy open. One query so list HTML and JSON share the same signal. */
+export async function listHumanOpenIds(db: D1Database, messageIds: readonly string[]): Promise<Set<string>> {
+  if (messageIds.length === 0) return new Set();
+  const placeholders = messageIds.map(() => "?").join(", ");
+  const res = await db
+    .prepare(
+      `SELECT DISTINCT message_id FROM events
+       WHERE type = 'open' AND classification = 'human_likely'
+         AND message_id IN (${placeholders})`,
+    )
+    .bind(...messageIds)
+    .all<{ message_id: string }>();
+  return new Set((res.results ?? []).map((row) => row.message_id));
+}
+
 export async function hadHumanOpen(db: D1Database, messageId: string): Promise<boolean> {
   const row = await db
     .prepare(

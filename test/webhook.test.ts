@@ -5,9 +5,13 @@ import {
   fireWebhook,
   isAllowedWebhookUrl,
   isBlockedAddress,
+  parseWebhookHostAllowlist,
   resolveWebhookHost,
   webhookAddressesAllowed,
+  webhookDeliveryFromEnv,
   webhookDnsDecision,
+  webhookDnsTtlDenied,
+  webhookHostAllowed,
   webhookPayload,
 } from "../src/webhook";
 
@@ -69,6 +73,9 @@ describe("webhook address policy", () => {
     expect(webhookDnsDecision(["10.0.0.1"])).toBe("deny");
     expect(webhookDnsDecision([])).toBe("unknown");
     expect(webhookDnsDecision(null)).toBe("unknown");
+    expect(webhookDnsTtlDenied(0)).toBe(true);
+    expect(webhookDnsTtlDenied(60)).toBe(false);
+    expect(webhookDnsTtlDenied(undefined)).toBe(false);
   });
 });
 
@@ -97,6 +104,14 @@ describe("resolveWebhookHost", () => {
 
     fetchMock.mockImplementation(async () => new Response("nope", { status: 503 }));
     await expect(resolveWebhookHost("hooks.example")).resolves.toBe("unknown");
+
+    fetchMock.mockImplementation(async (url: string) => {
+      const type = new URL(String(url)).searchParams.get("type");
+      const qtype = type === "A" ? 1 : 28;
+      const data = type === "A" ? "8.8.8.8" : "2606:4700:4700::1111";
+      return new Response(JSON.stringify({ Status: 0, Answer: [{ type: qtype, TTL: 0, data }] }), { status: 200 });
+    });
+    await expect(resolveWebhookHost("ttl0.example")).resolves.toBe("deny");
   });
 });
 
@@ -161,5 +176,54 @@ describe("fireWebhook", () => {
     );
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://127.0.0.1:8787/hook");
+  });
+
+  it("checks DNS twice and skips the POST when the second answer is private", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const decisions = ["allow", "deny"] as const;
+    let i = 0;
+    await fireWebhook(
+      "https://hooks.example/mail",
+      webhookPayload("first_open", message, "unknown", "proxy_open", "2026-09-23T00:00:00.000Z"),
+      async () => decisions[i++] ?? "deny",
+    );
+    expect(i).toBe(2);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("skips an inconclusive lookup when fail-closed is set", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const payload = webhookPayload("first_open", message, "unknown", "proxy_open", "2026-09-23T00:00:00.000Z");
+    await fireWebhook("https://hooks.example/mail", payload, async () => "unknown", { dnsFailClosed: true });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not fetch when webhooks are disabled or the host is off the allowlist", async () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const payload = webhookPayload("first_open", message, "unknown", "proxy_open", "2026-09-23T00:00:00.000Z");
+    await fireWebhook("https://hooks.example/mail", payload, async () => {
+      throw new Error("resolver must not run");
+    }, { disabled: true });
+    await fireWebhook("https://hooks.example/mail", payload, async () => {
+      throw new Error("resolver must not run");
+    }, { hostAllowlist: ["hooks.other.example"] });
+    await fireWebhook(
+      "https://hooks.example/mail",
+      payload,
+      async () => "allow",
+      { hostAllowlist: ["hooks.example"] },
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(parseWebhookHostAllowlist(" Hooks.Example., ")).toEqual(["hooks.example"]);
+    expect(parseWebhookHostAllowlist("  ,  ")).toBeUndefined();
+    expect(webhookHostAllowed("https://hooks.example/mail", ["hooks.example"])).toBe(true);
+    expect(webhookDeliveryFromEnv({ WEBHOOKS_DISABLED: "yes", WEBHOOK_DNS_FAIL_CLOSED: "0" })).toEqual({
+      disabled: true,
+      dnsFailClosed: false,
+      hostAllowlist: undefined,
+    });
   });
 });

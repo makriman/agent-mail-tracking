@@ -62,7 +62,7 @@ replied (future stub)
 
 ## Webhooks
 
-If `webhook_url` was set at create time, the Worker fire-and-forgets a POST on the **first** non-deduped open and the **first** non-deduped click. Failures are swallowed. Timeout is 5 seconds. The URL must be public `https`, or `http` to `localhost` / `127.0.0.1` for local dev. Private, link-local, metadata, and IPv6 literal hosts are rejected. Redirects are not followed. A public hostname is also checked with DNS-over-HTTPS: the POST is skipped only when an answer is non-public. A lookup error or an empty answer still POSTs, so a DNS hiccup does not drop a legitimate webhook. Follow-up: Workers have no pinned-IP fetch here, so a name can still change from a public address to a private one after that lookup.
+If `webhook_url` was set at create time, the Worker fire-and-forgets a POST on the **first** non-deduped open and the **first** non-deduped click. Failures are swallowed. Timeout is 5 seconds. The URL must be public `https`, or `http` to `localhost` / `127.0.0.1` for local dev. Private, link-local, metadata, and IPv6 literal hosts are rejected. Redirects are not followed. A public hostname is checked twice with DNS-over-HTTPS immediately before the POST. The POST is skipped when an answer is non-public or has TTL 0. A lookup error or an empty answer still POSTs unless `WEBHOOK_DNS_FAIL_CLOSED` is set. Optional `WEBHOOK_HOST_ALLOWLIST` and `WEBHOOKS_DISABLED` are operator knobs. Workers still cannot pin the connect address; see [SECURITY-WEBHOOK.md](./SECURITY-WEBHOOK.md).
 
 ```json
 {
